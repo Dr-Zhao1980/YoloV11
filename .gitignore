@@ -31,11 +31,3 @@ Thumbs.db
 uploads/
 *.pid
 
-# ---------- taoxichuan 子项目 ----------
-taoxichuan-ai-assessment/backend/target/
-taoxichuan-ai-assessment/frontend/node_modules/
-taoxichuan-ai-assessment/frontend/dist/
-taoxichuan-ai-assessment/frontend/auto-imports.d.ts
-taoxichuan-ai-assessment/frontend/components.d.ts
-taoxichuan-ai-assessment/frontend/.eslintrc-auto-import.json
-
