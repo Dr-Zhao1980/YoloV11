@@ -73,12 +73,12 @@
           </div>
         </div>
 
-        <!-- 工程量估算卡片 -->
-        <div v-if="report.overallAssessment.totalEstimatedCost > 0" class="assess-card ac-gold cost-card">
+        <!-- 修缮费用：功能待开发 -->
+        <div class="assess-card ac-gold cost-card cost-pending">
           <div class="ac-icon"><el-icon :size="22"><Coin /></el-icon></div>
           <div class="ac-body">
-            <div class="ac-val">¥{{ formatCost(report.overallAssessment.totalEstimatedCost) }}</div>
-            <div class="ac-lbl">修缮费用初估</div>
+            <div class="ac-val pending-val">功能待开发</div>
+            <div class="ac-lbl">修缮费用估算</div>
           </div>
         </div>
 
@@ -101,7 +101,7 @@
       <div class="rpt-section">
         <div class="section-head">
           <span class="sec-num">02</span>
-          <h3>五类病害详情与修缮方案</h3>
+          <h3>病害详情与修缮方案</h3>
         </div>
 
         <div v-for="(d, idx) in report.diseaseDetails" :key="d.name" class="dd-card" :class="{ detected: d.detected }">
@@ -113,7 +113,6 @@
             </el-tag>
             <span v-if="d.detected" class="dd-stat">
               {{ d.count }} 处<template v-if="d.totalArea">&ensp;·&ensp;{{ d.totalArea.toFixed(2) }} m²</template>
-              <template v-if="d.estimatedCost > 0">&ensp;·&ensp;¥{{ d.estimatedCost.toLocaleString() }}</template>
             </span>
           </div>
           <div class="dd-body">
@@ -142,9 +141,9 @@
               <span class="dd-fl">预防措施</span>
               <span class="dd-fv">{{ d.preventionMeasures }}</span>
             </div>
-            <div v-if="d.detected && d.estimatedCost > 0" class="dd-field dd-cost">
+            <div v-if="d.detected" class="dd-field dd-cost">
               <span class="dd-fl">费用估算</span>
-              <span class="dd-fv cost-val">¥{{ d.estimatedCost.toLocaleString() }} <small>({{ d.quantity.toFixed(2) }} {{ d.unit }})</small></span>
+              <span class="dd-fv pending-inline">功能待开发</span>
             </div>
           </div>
         </div>
@@ -321,9 +320,7 @@ function exportMarkdown() {
   lines.push(`| 风化面积 | ${a.weatheringArea} m² |`)
   lines.push(`| 泛碱面积 | ${a.efflorescenceArea} m² |`)
   lines.push(`| 综合风险 | **${a.overallRisk}** |`)
-  if (a.totalEstimatedCost > 0) {
-    lines.push(`| 修缮费用初估 | ¥${a.totalEstimatedCost.toLocaleString()} |`)
-  }
+  lines.push(`| 修缮费用初估 | 功能待开发 |`)
   lines.push('')
   lines.push(`> ${a.recommendation}`)
   lines.push('')
@@ -339,10 +336,7 @@ function exportMarkdown() {
     lines.push(`### ${i + 1}. ${d.name}${d.detected ? ` （${d.maxSeverity}）` : ' （未检出）'}`)
     lines.push('')
     if (d.detected) {
-      let stat = d.totalArea ? `${d.count} 处，面积约 ${d.totalArea.toFixed(2)} m²` : `${d.count} 处`
-      if (d.estimatedCost > 0) {
-        stat += `，费用估算 ¥${d.estimatedCost.toLocaleString()}`
-      }
+      const stat = d.totalArea ? `${d.count} 处，面积约 ${d.totalArea.toFixed(2)} m²` : `${d.count} 处`
       lines.push(`**检出统计：** ${stat}`)
       lines.push('')
     }
@@ -392,12 +386,9 @@ function exportWord() {
   const esc = (s: any) => String(s ?? '').replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]!))
 
   const diseaseHtml = (r.diseaseDetails || []).map((d: any, i: number) => {
-    let statText = d.detected 
+    const statText = d.detected 
       ? esc(d.maxSeverity) + (d.totalArea ? `（${d.count} 处，${d.totalArea.toFixed(2)} m²）` : `（${d.count} 处）`)
       : '未检出'
-    if (d.detected && d.estimatedCost > 0) {
-      statText += `<br/><span style="color:#d97706;">费用估算：¥${d.estimatedCost.toLocaleString()}</span>`
-    }
     return `
     <div style="border:1px solid #ccc; border-left:4px solid ${d.color || '#999'}; padding:12px 16px; margin-bottom:14px;">
       <h3 style="margin:0 0 10px;color:#003a66;">${i + 1}. ${esc(d.name)}
@@ -462,7 +453,7 @@ function exportWord() {
         <th>检出总数</th><td>${a.totalDetections} 处</td></tr>
     <tr><th>风化面积</th><td>${a.weatheringArea} m²</td>
         <th>泛碱面积</th><td>${a.efflorescenceArea} m²</td></tr>
-    ${a.totalEstimatedCost > 0 ? `<tr><th>修缮费用初估</th><td colspan="3" style="color:#d97706;font-weight:bold;">¥${a.totalEstimatedCost.toLocaleString()}</td></tr>` : ''}
+    <tr><th>修缮费用初估</th><td colspan="3" style="color:#b45309;">功能待开发</td></tr>
   </table>
   <div class="risk ${riskClass.value}">
     <b>综合风险等级：${esc(a.overallRisk)}</b><br/>${esc(a.recommendation)}
@@ -599,6 +590,14 @@ function exportWord() {
 .cost-val { color:#d97706; font-weight:700; }
 .cost-val small { color:#888; font-weight:400; }
 .dd-cost { background:#fffbeb; border-radius:8px; padding:10px 12px !important; margin-top:8px; }
+/* 功能待开发 */
+.cost-pending .ac-val.pending-val {
+  font-size:14px; font-weight:600; letter-spacing:.5px; opacity:.9;
+}
+.pending-inline {
+  color:#b45309; background:#fef3c7; border:1px solid #fde68a;
+  padding:2px 10px; border-radius:6px; font-size:12px; font-weight:600;
+}
 
 /* Professional note */
 .professional-note {

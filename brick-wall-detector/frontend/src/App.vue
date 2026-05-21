@@ -1,11 +1,10 @@
 <template>
   <div id="brick-app">
-    <Home />
+    <router-view />
   </div>
 </template>
 
 <script setup lang="ts">
-import Home from './views/Home.vue'
 </script>
 
 <style>

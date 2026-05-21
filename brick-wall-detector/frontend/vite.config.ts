@@ -3,13 +3,17 @@ import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 
 export default defineConfig({
+  root: __dirname,
   plugins: [
     vue(),
     {
       name: 'rewrite-html',
       configureServer(server) {
         server.middlewares.use((req, _res, next) => {
-          if (req.url === '/' || req.url === '/index.html') {
+          // SPA fallback: non-file requests go to entry.html
+          if (req.url && !req.url.includes('.') && !req.url.startsWith('/api') && !req.url.startsWith('/uploads') && !req.url.startsWith('/@') && !req.url.startsWith('/node_modules')) {
+            req.url = '/entry.html'
+          } else if (req.url === '/' || req.url === '/index.html') {
             req.url = '/entry.html'
           }
           next()
@@ -36,7 +40,8 @@ export default defineConfig({
     }
   },
   build: {
-    outDir: 'dist',
+    outDir: resolve(__dirname, '..', 'dist'),
+    emptyOutDir: true,
     rollupOptions: {
       input: resolve(__dirname, 'entry.html')
     }

@@ -40,6 +40,7 @@ api.interceptors.response.use(
 export interface Detection {
   id: number
   class: string
+  rawClassName?: string
   confidence: number
   bbox: number[]
   area: number | null
@@ -52,6 +53,12 @@ export interface SummaryItem {
   totalArea: number
   maxSeverity: string
   items: Detection[]
+}
+
+export interface ModelParams {
+  modelConf: number
+  iouThreshold: number
+  imageSize: number
 }
 
 export interface DetectionResult {
@@ -70,6 +77,10 @@ export interface DetectionResult {
   }
   brickLengthMm?: number
   note?: string
+  annotatedImageUrl?: string
+  coordTxtContent?: string
+  isDemo?: boolean
+  inferenceParams?: { modelConf: number; iouThreshold: number; inferImgsz: number }
 }
 
 export interface Report {
@@ -170,18 +181,26 @@ export async function checkHealth(): Promise<{ status: string; timestamp: string
  * 病害检测
  * @param imageFile 图片文件
  * @param brickLengthMm 参考砖长度（mm）
+ * @param modelParams 模型推理参数
  */
 export async function detectDisease(
   imageFile: File,
-  brickLengthMm: number = 240
+  brickLengthMm: number = 240,
+  modelParams?: Partial<ModelParams>
 ): Promise<DetectionResult> {
   const formData = new FormData()
   formData.append('image', imageFile)
   formData.append('brickLengthMm', String(brickLengthMm))
+  if (modelParams?.modelConf !== undefined)
+    formData.append('modelConf', String(modelParams.modelConf))
+  if (modelParams?.iouThreshold !== undefined)
+    formData.append('iouThreshold', String(modelParams.iouThreshold))
+  if (modelParams?.imageSize !== undefined)
+    formData.append('imageSize', String(modelParams.imageSize))
   
   return api.post('/detect', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 60000
+    timeout: 120000
   })
 }
 
@@ -226,6 +245,139 @@ export async function getAIStatus(): Promise<AIServiceStatus> {
   return api.get('/ai/status')
 }
 
+// ==================== 立面普查 API ====================
+
+export interface FacadeUploadPayload {
+  panorama: File
+  projectName: string
+  wallName: string
+  wallWidthM: number
+  wallHeightM: number
+  gridSizeM: number
+}
+
+export interface FacadeGrid {
+  gridId: string
+  row: number
+  col: number
+  xM: number
+  yM: number
+  widthM: number
+  heightM: number
+  totalCount: number
+  totalAreaM2: number
+  crackLengthM: number
+  intensity: number
+  diseases: Record<string, number>
+  detections: number[]
+  tileIds: string[]
+}
+
+export interface FacadeTile {
+  tileId: string
+  rowIndex: number
+  colIndex: number
+  offsetX: number
+  offsetY: number
+  width: number
+  height: number
+  tileUrl: string
+  status: string
+}
+
+export interface FacadeResult {
+  success: boolean
+  jobId: string
+  status: string
+  progress: number
+  sourceImageUrl: string
+  imageWidth: number
+  imageHeight: number
+  wallWidthM: number
+  wallHeightM: number
+  gridSizeM: number
+  totalTiles: number
+  totalDetections: number
+  grids: FacadeGrid[]
+  detections: any[]
+  summary: {
+    totalDetections: number
+    totalAreaM2: number
+    crackLengthM: number
+    highRiskGridCount: number
+    diseaseStats: Record<string, number>
+    keyRepairGrids: string[]
+  }
+  tiles?: FacadeTile[]
+}
+
+/**
+ * 上传全景立面影像
+ */
+export async function uploadFacadePanorama(
+  payload: FacadeUploadPayload
+): Promise<any> {
+  const formData = new FormData()
+  formData.append('panorama', payload.panorama)
+  formData.append('projectName', payload.projectName)
+  formData.append('wallName', payload.wallName)
+  formData.append('wallWidthM', String(payload.wallWidthM))
+  formData.append('wallHeightM', String(payload.wallHeightM))
+  formData.append('gridSizeM', String(payload.gridSizeM || 1))
+
+  return api.post('/facade/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000
+  })
+}
+
+/**
+ * 启动立面普查分析
+ */
+export async function analyzeFacade(jobId: string): Promise<FacadeResult> {
+  return api.post(`/facade/analyze/${jobId}`, {}, { timeout: 300000 })
+}
+
+/**
+ * 查询立面任务
+ */
+export async function getFacadeJob(jobId: string): Promise<any> {
+  return api.get(`/facade/job/${jobId}`)
+}
+
+/**
+ * 整墙立面修缮报告
+ */
+export async function getFacadeReport(jobId: string): Promise<any> {
+  return api.get(`/facade/report/${jobId}`)
+}
+
+// ==================== 拍摄质量初筛 API ====================
+
+export interface QualityCheckResult {
+  success: boolean
+  brightness: number
+  blur: number
+  resolution: { width: number; height: number }
+  estimatedBricks: number
+  warning: string | null
+  warningType: 'brightness' | 'blur' | 'distance' | 'resolution' | null
+  suggestion: string | null
+  passed: boolean
+}
+
+/**
+ * 后端软质检 - 三步法快速查勘指南后端复核
+ */
+export async function checkImageQuality(imageFile: File): Promise<QualityCheckResult> {
+  const formData = new FormData()
+  formData.append('image', imageFile)
+  return api.post('/quality-check', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 30000
+  })
+}
+
 // 导出 axios 实例供特殊场景使用
 export { api }
 
@@ -236,5 +388,10 @@ export default {
   generateReport,
   aiAnalyze,
   aiChat,
-  getAIStatus
+  getAIStatus,
+  uploadFacadePanorama,
+  analyzeFacade,
+  getFacadeJob,
+  getFacadeReport,
+  checkImageQuality
 }

@@ -34,6 +34,9 @@
     <!-- Main -->
     <main class="main-content">
 
+      <el-tabs v-model="activeMode" class="main-tabs">
+        <el-tab-pane label="单图检测" name="single">
+
       <!-- Upload Card -->
       <div class="section-card glass-card upload-card">
         <div class="card-head">
@@ -67,6 +70,98 @@
             />
             <span class="scale-unit">mm（标准红砖长 240mm）</span>
           </div>
+        </div>
+
+        <!-- 模型参数面板 -->
+        <div class="model-params-wrap">
+          <div class="mp-toggle" @click="showModelParams = !showModelParams">
+            <el-icon><Setting /></el-icon>
+            <span>模型推理参数</span>
+            <el-tag size="small" type="info" effect="plain" class="mp-summary">
+              置信度 {{ modelParams.modelConf.toFixed(2) }}
+              &nbsp;·&nbsp; IoU {{ modelParams.iouThreshold.toFixed(2) }}
+              &nbsp;·&nbsp; {{ modelParams.imageSize }}px
+            </el-tag>
+            <el-icon class="mp-arrow" :class="{ open: showModelParams }"><ArrowDown /></el-icon>
+          </div>
+          <transition name="slide-down">
+            <div v-show="showModelParams" class="mp-body">
+              <!-- 置信度 -->
+              <div class="mp-row">
+                <div class="mp-label">
+                  <span>置信度阈值</span>
+                  <el-tooltip placement="top" content="检测框置信度低于此值将被过滤。值越低召回率越高，但误检也越多">
+                    <el-icon class="help-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </div>
+                <div class="mp-control">
+                  <el-slider
+                    v-model="modelParams.modelConf"
+                    :min="0.05" :max="0.80" :step="0.05"
+                    :marks="{ 0.1:'0.1', 0.3:'0.3', 0.5:'0.5', 0.7:'0.7' }"
+                    class="mp-slider"
+                    :format-tooltip="(v: number) => v.toFixed(2)"
+                  />
+                  <el-input-number
+                    v-model="modelParams.modelConf"
+                    :min="0.05" :max="0.80" :step="0.05" :precision="2"
+                    size="small" controls-position="right" class="mp-num"
+                  />
+                </div>
+              </div>
+              <!-- IoU -->
+              <div class="mp-row">
+                <div class="mp-label">
+                  <span>IoU 阈值</span>
+                  <el-tooltip placement="top" content="NMS 去重时交并比阈值。值越小重叠框越容易被合并">
+                    <el-icon class="help-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </div>
+                <div class="mp-control">
+                  <el-slider
+                    v-model="modelParams.iouThreshold"
+                    :min="0.10" :max="0.70" :step="0.05"
+                    :marks="{ 0.2:'0.2', 0.45:'0.45', 0.6:'0.6' }"
+                    class="mp-slider"
+                    :format-tooltip="(v: number) => v.toFixed(2)"
+                  />
+                  <el-input-number
+                    v-model="modelParams.iouThreshold"
+                    :min="0.10" :max="0.70" :step="0.05" :precision="2"
+                    size="small" controls-position="right" class="mp-num"
+                  />
+                </div>
+              </div>
+              <!-- 图像尺寸 -->
+              <div class="mp-row">
+                <div class="mp-label">
+                  <span>推理图像尺寸</span>
+                  <el-tooltip placement="top" content="输入模型前将图像缩放到此尺寸。越大精度越高，速度越慢">
+                    <el-icon class="help-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </div>
+                <div class="mp-control mp-control-select">
+                  <el-radio-group v-model="modelParams.imageSize" size="small">
+                    <el-radio-button :value="320">320</el-radio-button>
+                    <el-radio-button :value="416">416</el-radio-button>
+                    <el-radio-button :value="640">640</el-radio-button>
+                    <el-radio-button :value="1024">1024</el-radio-button>
+                    <el-radio-button :value="1280">1280</el-radio-button>
+                  </el-radio-group>
+                  <span class="size-hint">px（建议 640）</span>
+                </div>
+              </div>
+              <!-- 重置 -->
+              <div class="mp-reset">
+                <el-button
+                  size="small" plain
+                  @click="modelParams = { modelConf: 0.30, iouThreshold: 0.45, imageSize: 640 }"
+                >
+                  恢复默认值
+                </el-button>
+              </div>
+            </div>
+          </transition>
         </div>
 
         <el-upload
@@ -150,38 +245,97 @@
                 <el-icon><DataBoard /></el-icon>
                 {{ showDashboard ? '关闭看板' : '看板模式' }}
               </el-button>
-              <div class="model-badge" :class="{ demo: isDemo }">
+              <div class="model-badge" :class="{ demo: detectionResult.isDemo }">
                 <span class="mb-dot"></span>
                 <span>{{ detectionResult.modelInfo?.name || 'YOLOv11' }}</span>
                 <span class="mb-sep">·</span>
-                <span>{{ isDemo ? '演示模式' : '已连接' }}</span>
+                <span>{{ detectionResult.isDemo ? '演示模式' : '真实推理' }}</span>
               </div>
             </div>
           </div>
 
+          <!-- 演示模式警告 -->
+          <el-alert
+            v-if="detectionResult.isDemo"
+            type="warning"
+            :closable="false"
+            show-icon
+            style="margin-bottom:16px"
+          >
+            <template #title>
+              当前为演示模式（未连接真实模型）
+            </template>
+            <span>以下结果为随机生成的演示数据，不反映上传图片的真实检测结果。请确保后端模型文件（<code>backend/models/best.pt</code>）已就位并重启服务。</span>
+          </el-alert>
+
+          <!-- 推理参数标签栏 -->
+          <div v-if="detectionResult.inferenceParams && !detectionResult.isDemo" class="infer-params-bar">
+            <el-icon><Setting /></el-icon>
+            <span>推理参数：</span>
+            <el-tag size="small" effect="plain">置信度 {{ detectionResult.inferenceParams.modelConf?.toFixed(2) }}</el-tag>
+            <el-tag size="small" effect="plain" type="success">IoU {{ detectionResult.inferenceParams.iouThreshold?.toFixed(2) }}</el-tag>
+            <el-tag size="small" effect="plain" type="warning">{{ detectionResult.inferenceParams.inferImgsz }}px</el-tag>
+            <span class="ip-platform">·&ensp;{{ detectionResult.modelInfo?.platform }}</span>
+          </div>
+
           <el-row :gutter="28">
-            <!-- Image with bboxes -->
+            <!-- Image panel -->
             <el-col :xs="24" :md="14">
-              <div class="detection-image-wrap">
-                <img
-                  ref="detectionImageRef"
-                  :src="detectionResult.imagePath"
-                  class="det-image"
-                  @load="onDetImageLoaded"
-                  crossorigin="anonymous"
-                />
-                <div
-                  v-for="(det, i) in detectionResult.detections"
-                  :key="det.id"
-                  class="bbox"
-                  :style="getBboxStyle(det)"
-                  @click="highlightDisease(det.class)"
+              <!-- Image view tabs -->
+              <el-tabs v-model="imageViewTab" class="det-tabs" size="small">
+                <el-tab-pane
+                  v-if="detectionResult.annotatedImageUrl"
+                  label="标注图"
+                  name="annotated"
                 >
-                  <span class="bbox-label" :style="getBboxLabelStyle(det, i)">
-                    {{ det.class }} {{ (det.confidence * 100).toFixed(0) }}%
-                  </span>
-                </div>
-              </div>
+                  <div class="detection-image-wrap">
+                    <img
+                      :src="detectionResult.annotatedImageUrl"
+                      class="det-image"
+                      alt="标注图"
+                    />
+                  </div>
+                  <p class="img-note">由模型自动生成，标签格式：类别代码 置信度（如 05:B-FJ 0.62）</p>
+                </el-tab-pane>
+
+                <el-tab-pane label="原图+框" name="original">
+                  <div class="detection-image-wrap">
+                    <img
+                      ref="detectionImageRef"
+                      :src="detectionResult.imagePath"
+                      class="det-image"
+                      @load="onDetImageLoaded"
+                      crossorigin="anonymous"
+                    />
+                    <div
+                      v-for="(det, i) in detectionResult.detections"
+                      :key="det.id"
+                      class="bbox"
+                      :style="getBboxStyle(det)"
+                    >
+                      <span class="bbox-label" :style="getBboxLabelStyle(det, i)">
+                        {{ det.rawClassName || det.class }} {{ det.confidence.toFixed(2) }}
+                      </span>
+                    </div>
+                  </div>
+                </el-tab-pane>
+              </el-tabs>
+
+              <!-- Coordinate TXT panel -->
+              <el-collapse
+                v-if="detectionResult.coordTxtContent"
+                class="coord-collapse"
+                v-model="coordCollapseOpen"
+              >
+                <el-collapse-item name="txt">
+                  <template #title>
+                    <el-icon style="margin-right:6px"><Document /></el-icon>
+                    坐标文件（TXT）
+                  </template>
+                  <pre class="coord-txt">{{ detectionResult.coordTxtContent }}</pre>
+                </el-collapse-item>
+              </el-collapse>
+
               <div class="legend-bar">
                 <span v-for="(color, name) in DISEASE_COLORS" :key="name" class="legend-item">
                   <span class="legend-dot" :style="{ background: color }"></span>{{ name }}
@@ -282,6 +436,192 @@
       <transition name="slide-up">
         <RepairReport v-if="reportData" :report="reportData" />
       </transition>
+
+        </el-tab-pane>
+
+        <el-tab-pane label="立面普查模式" name="facade">
+          <section class="facade-upload-panel">
+            <el-card>
+              <template #header>
+                <div class="section-header">
+                  <span>专项项目上传</span>
+                  <el-tag>支持 RC 正射影像 TIFF / JPG</el-tag>
+                </div>
+              </template>
+
+              <el-upload
+                ref="facadeUploadRef"
+                drag
+                :auto-upload="false"
+                :limit="1"
+                :show-file-list="false"
+                accept=".jpg,.jpeg,.png,.tif,.tiff,.webp"
+                :on-change="handleFacadeFileChange"
+                :on-exceed="handleFacadeExceed"
+              >
+                <div v-if="facadeFile" class="facade-file-preview">
+                  <el-icon :size="32" color="#67c23a"><CircleCheck /></el-icon>
+                  <div class="facade-file-info">
+                    <div class="facade-file-name">{{ facadeFile.name }}</div>
+                    <div class="facade-file-meta">
+                      {{ (facadeFile.size / 1024 / 1024).toFixed(2) }} MB · 点击或拖拽更换文件
+                    </div>
+                  </div>
+                </div>
+                <template v-else>
+                  <el-icon :size="40" color="#0070C0"><UploadFilled /></el-icon>
+                  <div class="el-upload__text">
+                    上传全景大图 / 静安别墅矮墙正射影像
+                  </div>
+                </template>
+                <template #tip>
+                  <div class="el-upload__tip">
+                    支持 Reality Capture 生成的高清正射影像，建议上传 JPG / TIFF（最大 200MB）。
+                  </div>
+                </template>
+              </el-upload>
+
+              <el-form
+                :model="facadeForm"
+                :label-position="facadeFormLabelPosition"
+                :label-width="facadeFormLabelWidth"
+                class="facade-form"
+              >
+                <el-form-item label="项目名称">
+                  <el-input v-model="facadeForm.projectName" />
+                </el-form-item>
+                <el-form-item label="墙面名称">
+                  <el-input v-model="facadeForm.wallName" />
+                </el-form-item>
+                <el-form-item label="墙面宽度(m)">
+                  <el-input-number v-model="facadeForm.wallWidthM" :min="1" :precision="2" />
+                </el-form-item>
+                <el-form-item label="墙面高度(m)">
+                  <el-input-number v-model="facadeForm.wallHeightM" :min="1" :precision="2" />
+                </el-form-item>
+                <el-form-item label="网格尺寸(m)">
+                  <el-input-number v-model="facadeForm.gridSizeM" :min="1" :precision="1" />
+                </el-form-item>
+              </el-form>
+
+              <div class="facade-actions">
+                <el-button
+                  type="primary"
+                  :loading="facadeUploading"
+                  :disabled="!facadeFile"
+                  @click="uploadFacade"
+                >
+                  全景大图上传
+                </el-button>
+                <el-button disabled>
+                  多源碎图云端直拼（研发中）
+                </el-button>
+                <el-button
+                  type="success"
+                  :disabled="!facadeJobId"
+                  :loading="facadeAnalyzing"
+                  @click="runFacadeAnalyze"
+                >
+                  AI 诊断
+                </el-button>
+                <el-tag v-if="facadeJobId" type="success">已上传 · 任务 {{ facadeJobId.slice(0, 8) }}</el-tag>
+                <el-tag v-else-if="facadeFile" type="info">待上传</el-tag>
+              </div>
+            </el-card>
+          </section>
+
+          <section v-if="facadeResult" class="facade-result-layout">
+            <div class="facade-left">
+              <FacadeHeatmapCanvas
+                :image-url="facadeResult.sourceImageUrl"
+                :image-width="facadeResult.imageWidth"
+                :image-height="facadeResult.imageHeight"
+                :wall-width-m="facadeResult.wallWidthM"
+                :wall-height-m="facadeResult.wallHeightM"
+                :grids="facadeResult.grids"
+                @select-grid="selectedGrid = $event"
+              />
+            </div>
+            <div class="facade-right">
+              <FacadeDashboard
+                :summary="facadeResult.summary"
+                :grids="facadeResult.grids"
+                :selected-grid="selectedGrid"
+                :report-loading="facadeReportLoading"
+                @open-grid="openGridSliceDialog"
+                @generate-report="generateFacadeReport"
+              />
+            </div>
+          </section>
+
+          <transition name="slide-up">
+            <el-card v-if="facadeReport" class="facade-report-card">
+              <template #header>
+                <div class="section-header">
+                  <span>{{ facadeReport.title }}</span>
+                  <el-tag :type="riskTagType(facadeReport.overallAssessment.overallRisk)">
+                    {{ facadeReport.overallAssessment.overallRisk }}
+                  </el-tag>
+                </div>
+              </template>
+
+              <el-descriptions :column="2" border>
+                <el-descriptions-item label="项目">{{ facadeReport.projectName }}</el-descriptions-item>
+                <el-descriptions-item label="墙面">{{ facadeReport.wallName }}</el-descriptions-item>
+                <el-descriptions-item label="墙面面积">{{ facadeReport.wallAreaM2 }} m²</el-descriptions-item>
+                <el-descriptions-item label="网格尺寸">{{ facadeReport.gridSizeM }} m</el-descriptions-item>
+                <el-descriptions-item label="病害总数">{{ facadeReport.overallAssessment.totalDetections }}</el-descriptions-item>
+                <el-descriptions-item label="受损面积">{{ facadeReport.overallAssessment.totalDamageAreaM2 }} m²</el-descriptions-item>
+                <el-descriptions-item label="裂缝长度">{{ facadeReport.overallAssessment.crackLengthM }} m</el-descriptions-item>
+                <el-descriptions-item label="高风险网格">{{ facadeReport.overallAssessment.highRiskGridCount }}</el-descriptions-item>
+                <el-descriptions-item label="损伤占比">{{ facadeReport.overallAssessment.damageRatio }}%</el-descriptions-item>
+                <el-descriptions-item label="预估造价">¥{{ facadeReport.overallAssessment.totalEstimatedCost }}</el-descriptions-item>
+              </el-descriptions>
+
+              <el-alert
+                class="facade-recommendation"
+                type="warning"
+                :closable="false"
+                :title="facadeReport.overallAssessment.recommendation"
+              />
+
+              <h4 class="facade-section-title">病害分布明细</h4>
+              <el-table :data="facadeReport.diseaseDetails.filter((d: any) => d.detected)" border stripe>
+                <el-table-column prop="name" label="病害" width="100">
+                  <template #default="{ row }">
+                    <span class="d-dot" :style="{ background: row.color }"></span>
+                    {{ row.name }}
+                  </template>
+                </el-table-column>
+                <el-table-column prop="count" label="数量" width="80" />
+                <el-table-column prop="totalArea" label="面积(m²)" width="110" />
+                <el-table-column prop="estimatedCost" label="造价(¥)" width="110" />
+                <el-table-column prop="repairMethod" label="建议工艺">
+                  <template #default="{ row }">
+                    <el-tag v-for="m in (row.repairMethod || [])" :key="m" size="small" style="margin-right:4px">{{ m }}</el-tag>
+                  </template>
+                </el-table-column>
+              </el-table>
+
+              <h4 class="facade-section-title">重点修缮网格 Top {{ facadeReport.topGrids.length }}</h4>
+              <el-table :data="facadeReport.topGrids" border stripe size="small">
+                <el-table-column prop="gridId" label="网格" width="110" />
+                <el-table-column prop="totalCount" label="病害数" width="90" />
+                <el-table-column prop="totalAreaM2" label="面积(m²)" width="110" />
+                <el-table-column prop="crackLengthM" label="裂缝(m)" width="100" />
+                <el-table-column prop="intensity" label="风险强度" />
+              </el-table>
+            </el-card>
+          </transition>
+
+          <GridSliceDialog
+            v-model="gridSliceDialogVisible"
+            :grid="selectedGrid"
+            :tiles="facadeResult?.tiles || []"
+          />
+        </el-tab-pane>
+      </el-tabs>
+
     </main>
 
     <!-- Scroll to Top -->
@@ -302,13 +642,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { detectDisease, generateReport as apiGenerateReport } from '../api'
-import type { DetectionResult } from '../api'
+import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, getFacadeReport } from '../api'
+import type { DetectionResult, FacadeResult, ModelParams } from '../api'
 import RepairReport from '../components/RepairReport.vue'
 import ShootingGuide from '../components/ShootingGuide.vue'
 import DashboardView from '../components/DashboardView.vue'
+import FacadeHeatmapCanvas from '../components/FacadeHeatmapCanvas.vue'
+import FacadeDashboard from '../components/FacadeDashboard.vue'
+import GridSliceDialog from '../components/GridSliceDialog.vue'
 
 // ==================== Constants ====================
 const MAX_FILE_MB = 10
@@ -319,7 +662,7 @@ const DISEASE_COLORS: Readonly<Record<string, string>> = Object.freeze({
   '风化': '#e74c3c',
   '泛碱': '#3498db',
   '裂缝': '#f39c12',
-  '脱落': '#9b59b6',
+  '植物附着': '#9b59b6',
   '缺损': '#1abc9c'
 })
 
@@ -362,6 +705,13 @@ const reportData = ref<any>(null)
 
 // 参考尺寸（红砖长度，单位mm）
 const brickLengthMm = ref(240)
+// 模型推理参数
+const modelParams = ref<ModelParams>({
+  modelConf: 0.30,
+  iouThreshold: 0.45,
+  imageSize: 640
+})
+const showModelParams = ref(false)
 // 图片质量检测结果（对应三步法指南的后端软质检）
 const imageQuality = ref<QualityResult>({
   brightness: 0,
@@ -373,17 +723,162 @@ const imageQuality = ref<QualityResult>({
 })
 // 看板模式
 const showDashboard = ref(false)
+// 图片视图 tab（annotated=标注图, original=原图+框）
+const imageViewTab = ref('annotated')
+// 坐标 TXT 折叠面板
+const coordCollapseOpen = ref<string[]>([])
+
+// ==================== 立面普查模式 ====================
+const activeMode = ref('single')
+const facadeFile = ref<File | null>(null)
+const facadeUploading = ref(false)
+const facadeAnalyzing = ref(false)
+const facadeJobId = ref('')
+const facadeResult = ref<FacadeResult | null>(null)
+const selectedGrid = ref<any | null>(null)
+const gridSliceDialogVisible = ref(false)
+
+const facadeForm = reactive({
+  projectName: '静安别墅红砖病害智能检测系统',
+  wallName: '静安别墅矮墙立面',
+  wallWidthM: 12,
+  wallHeightM: 3,
+  gridSizeM: 1
+})
+
+const facadeUploadRef = ref<any>(null)
+const FACADE_MAX_MB = 200
+const FACADE_ACCEPTED_EXTS = ['jpg', 'jpeg', 'png', 'tif', 'tiff', 'webp']
+
+function validateFacadeFile(raw: File): string | null {
+  if (!raw) return '未选择文件'
+  const ext = (raw.name.split('.').pop() || '').toLowerCase()
+  if (!FACADE_ACCEPTED_EXTS.includes(ext)) {
+    return `仅支持 ${FACADE_ACCEPTED_EXTS.join(' / ').toUpperCase()} 格式`
+  }
+  if (raw.size > FACADE_MAX_MB * 1024 * 1024) {
+    return `文件过大（${(raw.size / 1024 / 1024).toFixed(1)}MB），最大支持 ${FACADE_MAX_MB}MB`
+  }
+  return null
+}
+
+function handleFacadeFileChange(file: any) {
+  if (!file?.raw) return
+  const err = validateFacadeFile(file.raw)
+  if (err) {
+    ElMessage.error(err)
+    facadeUploadRef.value?.clearFiles()
+    facadeFile.value = null
+    return
+  }
+  facadeFile.value = file.raw
+  // 切换文件后重置上下文
+  facadeJobId.value = ''
+  facadeResult.value = null
+  facadeReport.value = null
+  selectedGrid.value = null
+  ElMessage.success(`已选择文件：${file.raw.name}`)
+}
+
+function handleFacadeExceed(files: File[]) {
+  // limit=1 时再次拖入文件，自动替换
+  const file = files[0]
+  if (!file) return
+  facadeUploadRef.value?.clearFiles()
+  const fakeChange = { raw: file, name: file.name, size: file.size }
+  handleFacadeFileChange(fakeChange)
+}
+
+async function uploadFacade() {
+  if (!facadeFile.value) {
+    ElMessage.warning('请先上传全景立面影像')
+    return
+  }
+  if (!facadeForm.wallWidthM || !facadeForm.wallHeightM) {
+    ElMessage.warning('请填写墙体实际宽度和高度')
+    return
+  }
+  try {
+    facadeUploading.value = true
+    const result = await uploadFacadePanorama({
+      panorama: facadeFile.value,
+      projectName: facadeForm.projectName,
+      wallName: facadeForm.wallName,
+      wallWidthM: facadeForm.wallWidthM,
+      wallHeightM: facadeForm.wallHeightM,
+      gridSizeM: facadeForm.gridSizeM
+    })
+    if (!result.success) throw new Error(result.message || '上传失败')
+    facadeJobId.value = result.jobId
+    ElMessage.success('全景大图上传成功，请点击 AI 诊断')
+  } catch (error: any) {
+    ElMessage.error(error.message || '全景图上传失败')
+  } finally {
+    facadeUploading.value = false
+  }
+}
+
+async function runFacadeAnalyze() {
+  if (!facadeJobId.value) {
+    ElMessage.warning('请先上传全景大图')
+    return
+  }
+  try {
+    facadeAnalyzing.value = true
+    const result = await analyzeFacade(facadeJobId.value)
+    if (!result.success) throw new Error((result as any).message || 'AI 诊断失败')
+    facadeResult.value = result
+    selectedGrid.value = null
+    ElMessage.success('立面普查分析完成')
+  } catch (error: any) {
+    ElMessage.error(error.message || '立面普查分析失败')
+  } finally {
+    facadeAnalyzing.value = false
+  }
+}
+
+function openGridSliceDialog(grid: any) {
+  selectedGrid.value = grid
+  gridSliceDialogVisible.value = true
+}
+
+const facadeReportLoading = ref(false)
+const facadeReport = ref<any | null>(null)
+
+async function generateFacadeReport() {
+  if (!facadeJobId.value) {
+    ElMessage.warning('请先完成立面 AI 诊断')
+    return
+  }
+  try {
+    facadeReportLoading.value = true
+    const result: any = await getFacadeReport(facadeJobId.value)
+    if (!result.success) throw new Error(result.message || '整墙报告生成失败')
+    facadeReport.value = result.report
+    ElMessage.success('整墙修缮报告已生成')
+  } catch (error: any) {
+    ElMessage.error(error.message || '整墙报告生成失败')
+  } finally {
+    facadeReportLoading.value = false
+  }
+}
 
 // ==================== Computed ====================
 
 const diseaseSummary = computed(() => detectionResult.value?.summary || {})
 const weatheringArea = computed(() => diseaseSummary.value?.['风化']?.totalArea || 0)
 const efflorescenceArea = computed(() => diseaseSummary.value?.['泛碱']?.totalArea || 0)
-const isDemo = computed(() => !!detectionResult.value?.note)
+const isDemo = computed(() => !!detectionResult.value?.isDemo)
 
 // ==================== Helpers ====================
 function diseaseColor(name: string): string {
   return DISEASE_COLORS[name] || '#999'
+}
+
+function riskTagType(risk: string): 'danger' | 'warning' | 'success' {
+  if (risk === '高风险') return 'danger'
+  if (risk === '中风险') return 'warning'
+  return 'success'
 }
 
 function severityType(s: string): 'danger' | 'warning' | 'success' {
@@ -592,13 +1087,14 @@ async function startDetection() {
   }, PROGRESS_TICK_MS)
 
   try {
-    const result = await detectDisease(selectedFile.value, brickLengthMm.value)
+    const result = await detectDisease(selectedFile.value, brickLengthMm.value, modelParams.value)
 
     clearInterval(progressInterval)
     progress.value = 100
 
     if (result.success) {
       detectionResult.value = result
+      imageViewTab.value = result.annotatedImageUrl ? 'annotated' : 'original'
       ElMessage.success(`检测完成！发现 ${result.totalDetections} 处病害`)
     } else {
       ElMessage.error('检测失败')
@@ -636,7 +1132,13 @@ function scrollToTop() {
 }
 
 let resizeRaf = 0
+const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1280)
+const isMobile = computed(() => viewportWidth.value <= 768)
+const facadeFormLabelPosition = computed(() => isMobile.value ? 'top' : 'right')
+const facadeFormLabelWidth = computed(() => isMobile.value ? 'auto' : '120px')
+
 function onWindowResize() {
+  viewportWidth.value = window.innerWidth
   cancelAnimationFrame(resizeRaf)
   resizeRaf = requestAnimationFrame(recalcImageScale)
 }
@@ -822,6 +1324,63 @@ async function generateReport() {
 .scale-inputs { display:flex; align-items:center; gap:10px; }
 .scale-unit { font-size:13px; color:#64748b; }
 
+/* ===================== MODEL PARAMS PANEL ===================== */
+.model-params-wrap {
+  border:1px solid #dde5f0; border-radius:10px; margin-bottom:16px; overflow:hidden;
+  background:#fafcff;
+}
+.mp-toggle {
+  display:flex; align-items:center; gap:10px; padding:11px 16px;
+  cursor:pointer; user-select:none;
+  font-size:14px; font-weight:500; color:#003a66;
+  transition:background .18s;
+}
+.mp-toggle:hover { background:#f0f6ff; }
+.mp-toggle .el-icon:first-child { color:#0070C0; }
+.mp-summary { margin-left:auto; font-size:12px; }
+.mp-arrow {
+  color:#94a3b8; transition:transform .25s;
+  margin-left:4px;
+}
+.mp-arrow.open { transform:rotate(180deg); }
+.mp-body {
+  padding:16px 20px 14px; border-top:1px solid #e8edf5;
+  background:#fff;
+}
+.mp-row {
+  display:flex; align-items:center; gap:16px; margin-bottom:18px; flex-wrap:wrap;
+}
+.mp-label {
+  width:100px; display:flex; align-items:center; gap:6px;
+  font-size:13px; color:#334155; font-weight:500; flex-shrink:0;
+}
+.mp-control {
+  flex:1; display:flex; align-items:center; gap:14px; min-width:0;
+}
+.mp-slider { flex:1; min-width:120px; }
+.mp-num { width:90px; flex-shrink:0; }
+.mp-control-select { gap:12px; flex-wrap:wrap; align-items:center; }
+.size-hint { font-size:12px; color:#94a3b8; white-space:nowrap; }
+.mp-reset { display:flex; justify-content:flex-end; margin-top:4px; }
+
+/* slide-down transition */
+.slide-down-enter-active, .slide-down-leave-active {
+  transition: max-height .28s ease, opacity .22s ease;
+  overflow: hidden;
+}
+.slide-down-enter-from, .slide-down-leave-to { max-height: 0; opacity: 0; }
+.slide-down-enter-to, .slide-down-leave-from { max-height: 400px; opacity: 1; }
+
+/* ===================== INFERENCE PARAMS BAR ===================== */
+.infer-params-bar {
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:8px 14px; margin-bottom:14px;
+  background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px;
+  font-size:13px; color:#0369a1;
+}
+.infer-params-bar .el-tag { font-size:12px; }
+.ip-platform { color:#64748b; font-size:12px; margin-left:4px; }
+
 /* ===================== UPLOAD ===================== */
 .upload-area { width:100%; }
 .upload-area :deep(.el-upload-dragger) {
@@ -927,6 +1486,25 @@ async function generateReport() {
   box-shadow:0 1px 4px rgba(0,0,0,.25); line-height:1.4; z-index:5;
 }
 .note-tag { border-radius:12px; }
+
+/* ===================== ANNOTATED IMAGE ===================== */
+.det-tabs { margin-bottom:0; }
+.det-tabs :deep(.el-tabs__header) { margin-bottom:10px; }
+.img-note {
+  margin:6px 0 0; font-size:11px; color:#8899aa; text-align:center;
+  font-style:italic; padding:0 4px;
+}
+.coord-collapse { margin-top:10px; border:1px solid #dde5f0; border-radius:8px; overflow:hidden; }
+.coord-collapse :deep(.el-collapse-item__header) {
+  padding:0 14px; font-size:13px; font-weight:600; color:#0070C0;
+  background:#f4faff; height:38px;
+}
+.coord-txt {
+  background:#1e2a3a; color:#a8d8a8; font-family:'Consolas','Courier New',monospace;
+  font-size:12px; line-height:1.8; padding:14px 16px; margin:0;
+  white-space:pre-wrap; word-break:break-all; max-height:260px; overflow-y:auto;
+}
+
 .legend-bar { display:flex; justify-content:center; gap:20px; padding:14px 0 4px; flex-wrap:wrap; }
 .legend-item { display:flex; align-items:center; gap:6px; font-size:13px; color:#555; }
 .legend-dot { width:10px; height:10px; border-radius:50%; display:inline-block; box-shadow:0 0 4px rgba(0,0,0,.15); }
@@ -988,6 +1566,66 @@ async function generateReport() {
 /* kill any stray dots from el-upload */
 :deep(.el-upload-list__item) { display:none !important; }
 
+/* ===================== TABS ===================== */
+.main-tabs { width:100%; }
+.main-tabs :deep(.el-tabs__header) {
+  margin-bottom:20px;
+  position:sticky; top:0; z-index:10;
+  background:rgba(244,250,255,0.92);
+  backdrop-filter:blur(8px);
+}
+.main-tabs :deep(.el-tabs__nav-wrap) { padding:0 8px; }
+.main-tabs :deep(.el-tabs__item) {
+  font-size:15px; font-weight:500;
+  height:48px; line-height:48px;
+}
+@media (max-width:768px) {
+  .main-tabs :deep(.el-tabs__header) { margin-bottom:14px; }
+  .main-tabs :deep(.el-tabs__item) {
+    font-size:14px; height:44px; line-height:44px; padding:0 14px;
+  }
+  /* 让 tab 平均分布占满宽度 */
+  .main-tabs :deep(.el-tabs__nav) {
+    display:flex; width:100%;
+  }
+  .main-tabs :deep(.el-tabs__nav .el-tabs__item) {
+    flex:1; text-align:center;
+  }
+}
+
+/* ===================== FACADE ===================== */
+.facade-upload-panel { margin-bottom:24px; }
+.section-header { display:flex; align-items:center; justify-content:space-between; }
+.facade-form { margin-top:24px; max-width:680px; }
+.facade-actions { display:flex; gap:12px; margin-top:20px; flex-wrap:wrap; }
+.facade-result-layout {
+  display:grid; grid-template-columns:minmax(0,1fr) 360px;
+  gap:20px; align-items:stretch;
+}
+.facade-left { min-width:0; }
+.facade-right { min-width:320px; }
+
+@media (max-width:992px) {
+  .facade-result-layout { grid-template-columns:1fr; }
+  .facade-right { min-width:0; }
+}
+
+.facade-file-preview {
+  display:flex; align-items:center; justify-content:center; gap:14px; padding:24px;
+}
+.facade-file-info { text-align:left; }
+.facade-file-name { font-size:15px; font-weight:600; color:#303133; word-break:break-all; }
+.facade-file-meta { font-size:12px; color:#909399; margin-top:4px; }
+.facade-actions :deep(.el-tag) { margin-left:auto; }
+
+.facade-report-card { margin-top:24px; }
+.facade-recommendation { margin:16px 0; }
+.facade-section-title { margin:18px 0 10px; color:#003a66; font-size:15px; }
+.facade-report-card .d-dot {
+  display:inline-block; width:10px; height:10px; border-radius:50%;
+  margin-right:6px; vertical-align:middle;
+}
+
 /* ===================== RESPONSIVE ===================== */
 /* Tablet */
 @media (max-width:992px) {
@@ -1000,18 +1638,38 @@ async function generateReport() {
 
 /* Mobile */
 @media (max-width:768px) {
-  .hero-banner { padding:28px 16px 36px; }
-  .hero-banner h1 { font-size:22px; letter-spacing:0.5px; }
-  .hero-sub { font-size:13px; margin-bottom:16px; }
+  .hero-banner { padding:20px 12px 0; }
+  .hero-banner h1 { font-size:19px; letter-spacing:0.3px; line-height:1.3; }
+  .hero-sub { font-size:12px; margin-bottom:12px; opacity:.8; }
+  .hero-tags { gap:6px; }
+  .htag { padding:3px 10px; font-size:11px; border-radius:14px; letter-spacing:0; }
   .hero-features { gap:4px; flex-wrap:wrap; justify-content:center; }
   .hf-item { padding:6px 10px; font-size:11px; }
   .hf-arrow { font-size:10px; display:none; }
+
+  /* Hero steps: 强制单行不换行 */
+  .hero-steps {
+    padding:10px 8px;
+    gap:0;
+    flex-wrap:nowrap !important;
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
+  }
+  .hero-steps::-webkit-scrollbar { display:none; }
+  .hs { gap:5px; flex-shrink:0; }
+  .hs-num { width:22px; height:22px; font-size:11px; border-width:1.5px; }
+  .hs.active .hs-num,
+  .hs.done .hs-num { box-shadow:0 0 0 2px rgba(255,255,255,.2); }
+  .hs-label { font-size:11px; letter-spacing:0; }
+  .hs-line { width:20px; margin:0 6px; height:1.5px; }
+
   .main-content { padding:0 12px 24px; }
   .glass-card { padding:14px; margin-bottom:16px; border-radius:12px; }
   .card-title { font-size:15px; }
   .card-icon { width:28px; height:28px; border-radius:8px; }
-  
-  /* Step bar mobile */
+
+  /* Step bar mobile (老版 .step-bar，兼容保留) */
   .step-bar { gap:0; padding:12px 8px; }
   .step-item { flex-direction:column; gap:4px; }
   .step-num { width:24px; height:24px; font-size:11px; }
@@ -1100,8 +1758,76 @@ async function generateReport() {
 @media (max-width:768px) and (orientation:landscape) {
   .hero-banner { padding:20px 16px 28px; }
   .hero-banner h1 { font-size:20px; }
+  .hero-steps { padding:10px 12px; }
   .stat-grid { grid-template-columns:repeat(4, 1fr); }
   .stat-card { padding:10px 8px; }
   .stat-num { font-size:16px; }
+}
+
+/* ===================== FACADE TAB: 手机竖屏 / 横屏 / 桌面横屏 ===================== */
+@media (max-width:768px) {
+  .facade-upload-panel { margin-bottom:16px; }
+  .facade-form { margin-top:16px; max-width:100%; }
+  .facade-form :deep(.el-form-item) { margin-bottom:14px; }
+  .facade-form :deep(.el-form-item__label) {
+    font-size:13px; color:#003a66; font-weight:500;
+    line-height:1.4; padding-bottom:6px;
+  }
+  /* 输入框统一占满整行（label-position=top 模式下） */
+  .facade-form :deep(.el-input),
+  .facade-form :deep(.el-input-number),
+  .facade-form :deep(.el-input__wrapper) { width:100%; }
+  .facade-form :deep(.el-input-number .el-input__inner) { text-align:left; padding-left:8px; }
+
+  .facade-actions { flex-direction:column; gap:10px; }
+  .facade-actions .el-button { width:100%; margin-left:0 !important; }
+  .facade-actions :deep(.el-tag) { margin-left:0; align-self:flex-start; }
+
+  .facade-file-preview { padding:14px; gap:10px; flex-direction:column; text-align:center; }
+  .facade-file-info { text-align:center; }
+  .facade-file-name { font-size:13px; }
+  .facade-file-meta { font-size:11px; }
+
+  .facade-result-layout { gap:14px; }
+
+  .facade-section-title { font-size:14px; margin:14px 0 8px; }
+}
+
+/* 窄屏：墙体宽/高/网格三个数字输入并排成 3 列，节省纵向空间 */
+@media (min-width:481px) and (max-width:768px) {
+  .facade-form :deep(.el-form-item:nth-child(3)),
+  .facade-form :deep(.el-form-item:nth-child(4)),
+  .facade-form :deep(.el-form-item:nth-child(5)) {
+    display:inline-block; width:calc(33.333% - 8px); vertical-align:top;
+  }
+  .facade-form :deep(.el-form-item:nth-child(3)) { margin-right:12px; }
+  .facade-form :deep(.el-form-item:nth-child(4)) { margin-right:12px; }
+}
+
+/* 桌面超宽屏：避免单图检测左右分栏过宽 */
+@media (min-width:1600px) {
+  .main-content { max-width:1320px; }
+}
+
+/* 桌面横屏（普通 16:9）确保立面热力图与右侧看板比例舒适 */
+@media (min-width:993px) and (max-width:1599px) {
+  .facade-result-layout { grid-template-columns:minmax(0,1fr) 380px; }
+}
+
+/* 大屏：让看板更宽以承载更多指标 */
+@media (min-width:1600px) {
+  .facade-result-layout { grid-template-columns:minmax(0,1fr) 420px; }
+}
+
+/* iPad / 中等屏幕优化 */
+@media (min-width:769px) and (max-width:992px) {
+  .facade-result-layout { grid-template-columns:1fr; }
+  .facade-actions { gap:10px; }
+  .main-content { padding:24px 18px 32px; }
+}
+
+/* 高分屏 dpr>=2 时关闭部分动效以节省性能 */
+@media (-webkit-min-device-pixel-ratio: 2) and (max-width: 768px) {
+  .stat-card, .disease-row, .glass-card { transition:none; }
 }
 </style>

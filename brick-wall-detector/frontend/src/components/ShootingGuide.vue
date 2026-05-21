@@ -142,7 +142,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 
-const expanded = ref(true)
+// 手机默认折叠，桌面默认展开
+const expanded = ref(typeof window === 'undefined' ? true : window.innerWidth > 768)
 const activeStep = ref(0)
 
 const steps = [
@@ -616,7 +617,11 @@ const steps = [
   .comparison-wrap {
     gap: 6px;
   }
-  
+
+  .compare-visual {
+    aspect-ratio: 16/9;
+  }
+
   .visual-placeholder {
     padding: 6px;
   }

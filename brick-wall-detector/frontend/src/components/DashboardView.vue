@@ -144,7 +144,7 @@ const DISEASE_COLORS: Record<string, string> = {
   '风化': '#e74c3c',
   '泛碱': '#3498db',
   '裂缝': '#f39c12',
-  '脱落': '#9b59b6',
+  '植物附着': '#9b59b6',
   '缺损': '#1abc9c'
 }
 

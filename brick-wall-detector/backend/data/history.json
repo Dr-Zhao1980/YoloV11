@@ -1,0 +1,573 @@
+[
+  {
+    "id": 34,
+    "recordNo": "DET-1779368637799",
+    "detectTime": "2026-05-21 13:03:57",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "IMG_4124_x0_y1440.JPG",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "风化",
+      "缺损",
+      "泛碱"
+    ],
+    "diseaseCount": 10,
+    "resultImageUrl": "/uploads/single/1779368635940-809894838.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 33,
+    "recordNo": "DET-1779368506401",
+    "detectTime": "2026-05-21 13:01:46",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "IMG_4124.JPG",
+    "wallSize": "4080x2720",
+    "diseaseTypes": [
+      "风化",
+      "缺损"
+    ],
+    "diseaseCount": 41,
+    "resultImageUrl": "/uploads/single/1779368503136-666803824.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 32,
+    "recordNo": "DET-1779366642043",
+    "detectTime": "2026-05-21 12:30:42",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "å¾®ä¿¡å¾ç_20260314131010_848_1543.png",
+    "wallSize": "1107x1107",
+    "diseaseTypes": [
+      "风化",
+      "泛碱",
+      "缺损"
+    ],
+    "diseaseCount": 27,
+    "resultImageUrl": "/uploads/single/1779366639852-204393102.png",
+    "reportUrl": null
+  },
+  {
+    "id": 31,
+    "recordNo": "DET-1779366602601",
+    "detectTime": "2026-05-21 12:30:02",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "9_x2800_y0 - å¯æ¬ (3).JPG",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "风化",
+      "缺损"
+    ],
+    "diseaseCount": 6,
+    "resultImageUrl": "/uploads/single/1779366600777-478622473.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 30,
+    "recordNo": "DET-1779366489742",
+    "detectTime": "2026-05-21 12:28:09",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "8_x1024_y0 - å¯æ¬ (3).JPG",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "泛碱",
+      "风化"
+    ],
+    "diseaseCount": 11,
+    "resultImageUrl": "/uploads/single/1779366487898-826496001.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 29,
+    "recordNo": "DET-1779366482773",
+    "detectTime": "2026-05-21 12:28:02",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "6_x2800_y0 - å¯æ¬ (3).JPG",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "风化",
+      "泛碱"
+    ],
+    "diseaseCount": 7,
+    "resultImageUrl": "/uploads/single/1779366480970-903657784.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 28,
+    "recordNo": "DET-1779366449949",
+    "detectTime": "2026-05-21 12:27:29",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "6_x2800_y0 - å¯æ¬ (3).JPG",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "风化",
+      "泛碱"
+    ],
+    "diseaseCount": 7,
+    "resultImageUrl": "/uploads/single/1779366448115-759821129.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 27,
+    "recordNo": "DET-1779366435877",
+    "detectTime": "2026-05-21 12:27:15",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "1_x0_y1024 - å¯æ¬.JPG",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "泛碱",
+      "缺损",
+      "风化"
+    ],
+    "diseaseCount": 20,
+    "resultImageUrl": "/uploads/single/1779366434061-807299589.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 26,
+    "recordNo": "DET-1779366306851",
+    "detectTime": "2026-05-21 12:25:06",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "1778501833699-977377852.JPG",
+    "wallSize": "4080x2720",
+    "diseaseTypes": [
+      "泛碱",
+      "风化",
+      "缺损"
+    ],
+    "diseaseCount": 40,
+    "resultImageUrl": "/uploads/single/1779366304717-584383584.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 25,
+    "recordNo": "DET-1779366291699",
+    "detectTime": "2026-05-21 12:24:51",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "1778501833699-977377852.JPG",
+    "wallSize": "4080x2720",
+    "diseaseTypes": [
+      "泛碱",
+      "风化",
+      "缺损"
+    ],
+    "diseaseCount": 40,
+    "resultImageUrl": "/uploads/single/1779366289569-566437676.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 24,
+    "recordNo": "DET-1779366212904",
+    "detectTime": "2026-05-21 12:23:32",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "1778501833699-977377852.JPG",
+    "wallSize": "4080x2720",
+    "diseaseTypes": [
+      "泛碱",
+      "风化",
+      "缺损"
+    ],
+    "diseaseCount": 40,
+    "resultImageUrl": "/uploads/single/1779366210655-793411591.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 23,
+    "recordNo": "DET-1779365782852",
+    "detectTime": "2026-05-21 12:16:22",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "1778501833699-977377852.JPG",
+    "wallSize": "4080x2720",
+    "diseaseTypes": [
+      "泛碱",
+      "风化",
+      "缺损"
+    ],
+    "diseaseCount": 40,
+    "resultImageUrl": "/uploads/single/1779365780771-490383488.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 22,
+    "recordNo": "DET-1779365696108",
+    "detectTime": "2026-05-21 12:14:56",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "1778501833699-977377852.JPG",
+    "wallSize": "4080x2720",
+    "diseaseTypes": [
+      "泛碱",
+      "风化",
+      "缺损"
+    ],
+    "diseaseCount": 40,
+    "resultImageUrl": "/uploads/single/1779365693858-595326195.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 21,
+    "recordNo": "DET-1779356245787",
+    "detectTime": "2026-05-21 09:37:25",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "Image_1779356007439_55.jpg",
+    "wallSize": "800x600",
+    "diseaseTypes": [
+      "风化",
+      "泛碱",
+      "裂缝",
+      "植物附着",
+      "缺损"
+    ],
+    "diseaseCount": 8,
+    "resultImageUrl": "/uploads/single/1779356234471-84515975.jpg",
+    "reportUrl": null
+  },
+  {
+    "id": 20,
+    "recordNo": "DET-1779356181901",
+    "detectTime": "2026-05-21 09:36:21",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "Image_1779356007439_55.jpg",
+    "wallSize": "800x600",
+    "diseaseTypes": [
+      "风化",
+      "泛碱",
+      "裂缝",
+      "植物附着",
+      "缺损"
+    ],
+    "diseaseCount": 8,
+    "resultImageUrl": "/uploads/single/1779356169669-829401335.jpg",
+    "reportUrl": null
+  },
+  {
+    "id": 19,
+    "recordNo": "DET-1779356147771",
+    "detectTime": "2026-05-21 09:35:47",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "å¾®ä¿¡å¾ç_20260314131010_848_1543.png",
+    "wallSize": "800x600",
+    "diseaseTypes": [
+      "风化",
+      "泛碱",
+      "裂缝",
+      "植物附着",
+      "缺损"
+    ],
+    "diseaseCount": 8,
+    "resultImageUrl": "/uploads/single/1779356137054-627611989.png",
+    "reportUrl": null
+  },
+  {
+    "id": 18,
+    "recordNo": "DET-1779356036787",
+    "detectTime": "2026-05-21 09:33:56",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "Image_1779356007439_55.jpg",
+    "wallSize": "800x600",
+    "diseaseTypes": [
+      "风化",
+      "泛碱",
+      "裂缝",
+      "植物附着",
+      "缺损"
+    ],
+    "diseaseCount": 8,
+    "resultImageUrl": "/uploads/single/1779356025882-851195601.jpg",
+    "reportUrl": null
+  },
+  {
+    "id": 17,
+    "recordNo": "DET-1779354264292",
+    "detectTime": "2026-05-21 09:04:24",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "mmexport1779293208264.jpg",
+    "wallSize": "800x600",
+    "diseaseTypes": [
+      "风化",
+      "泛碱",
+      "裂缝",
+      "植物附着",
+      "缺损"
+    ],
+    "diseaseCount": 8,
+    "resultImageUrl": "/uploads/single/1779354255695-554674028.jpg",
+    "reportUrl": null
+  },
+  {
+    "id": 16,
+    "recordNo": "DET-1779353600523",
+    "detectTime": "2026-05-21 08:53:20",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "test_brick_wall.jpg",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "泛碱"
+    ],
+    "diseaseCount": 2,
+    "resultImageUrl": "/uploads/single/1779353589313-193627971.jpg",
+    "reportUrl": null
+  },
+  {
+    "id": 15,
+    "recordNo": "DET-1779352560734",
+    "detectTime": "2026-05-21 08:36:00",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "3_x0_y1024 - å¯æ¬ (3).JPG",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "风化"
+    ],
+    "diseaseCount": 4,
+    "resultImageUrl": "/uploads/single/1779352553238-998814120.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 14,
+    "recordNo": "DET-1779352543174",
+    "detectTime": "2026-05-21 08:35:43",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "2_x0_y1024 - å¯æ¬.JPG",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "风化",
+      "缺损"
+    ],
+    "diseaseCount": 8,
+    "resultImageUrl": "/uploads/single/1779352534204-918404010.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 13,
+    "recordNo": "DET-1779351526306",
+    "detectTime": "2026-05-21 08:18:46",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "test_brick_wall.jpg",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "泛碱"
+    ],
+    "diseaseCount": 2,
+    "resultImageUrl": "/uploads/single/1779351518030-38698838.jpg",
+    "reportUrl": null
+  },
+  {
+    "id": 12,
+    "recordNo": "DET-1779351063425",
+    "detectTime": "2026-05-21 08:11:03",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "2_x0_y1024 - å¯æ¬.JPG",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "风化",
+      "缺损"
+    ],
+    "diseaseCount": 8,
+    "resultImageUrl": "/uploads/single/1779351057227-45121972.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 11,
+    "recordNo": "DET-1779351001394",
+    "detectTime": "2026-05-21 08:10:01",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "åå¾_IMG_20251102_101124_x0_y1792.jpg",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "泛碱"
+    ],
+    "diseaseCount": 2,
+    "resultImageUrl": "/uploads/single/1779350992307-308702929.jpg",
+    "reportUrl": null
+  },
+  {
+    "id": 10,
+    "recordNo": "DET-1779350974106",
+    "detectTime": "2026-05-21 08:09:34",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "1_x2800_y0 - å¯æ¬ (2).JPG",
+    "wallSize": "800x600",
+    "diseaseTypes": [
+      "风化",
+      "泛碱",
+      "裂缝",
+      "植物附着",
+      "缺损"
+    ],
+    "diseaseCount": 8,
+    "resultImageUrl": "/uploads/single/1779350965888-797478011.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 9,
+    "recordNo": "DET-1779350952101",
+    "detectTime": "2026-05-21 08:09:12",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "1_x2800_y0 - å¯æ¬ (2).JPG",
+    "wallSize": "800x600",
+    "diseaseTypes": [
+      "风化",
+      "泛碱",
+      "裂缝",
+      "植物附着",
+      "缺损"
+    ],
+    "diseaseCount": 8,
+    "resultImageUrl": "/uploads/single/1779350945069-371320745.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 8,
+    "recordNo": "DET-1779350844780",
+    "detectTime": "2026-05-21 08:07:24",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "test_brick_wall.jpg",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "泛碱"
+    ],
+    "diseaseCount": 2,
+    "resultImageUrl": "/uploads/single/1779350837118-997938031.jpg",
+    "reportUrl": null
+  },
+  {
+    "id": 7,
+    "recordNo": "DET-1779350825267",
+    "detectTime": "2026-05-21 08:07:05",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "test_brick_wall.jpg",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "泛碱"
+    ],
+    "diseaseCount": 2,
+    "resultImageUrl": "/uploads/single/1779350817771-548040302.jpg",
+    "reportUrl": null
+  },
+  {
+    "id": 6,
+    "recordNo": "DET-1779350647615",
+    "detectTime": "2026-05-21 08:04:07",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "test_brick_wall.jpg",
+    "wallSize": "800x600",
+    "diseaseTypes": [
+      "风化",
+      "泛碱",
+      "裂缝",
+      "植物附着",
+      "缺损"
+    ],
+    "diseaseCount": 8,
+    "resultImageUrl": "/uploads/single/1779350635110-507077098.jpg",
+    "reportUrl": null
+  },
+  {
+    "id": 5,
+    "recordNo": "DET-1779349793857",
+    "detectTime": "2026-05-21 07:49:53",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "1_x0_y1024 - å¯æ¬.JPG",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "泛碱",
+      "缺损",
+      "风化"
+    ],
+    "diseaseCount": 24,
+    "resultImageUrl": "/uploads/single/1779349789976-504202794.JPG",
+    "reportUrl": null
+  },
+  {
+    "id": 4,
+    "recordNo": "DET-1779349760593",
+    "detectTime": "2026-05-21 07:49:20",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "åå¾_IMG_20251102_101124_x0_y1792.jpg",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "泛碱"
+    ],
+    "diseaseCount": 2,
+    "resultImageUrl": "/uploads/single/1779349756383-575458238.jpg",
+    "reportUrl": null
+  },
+  {
+    "id": 3,
+    "recordNo": "DET-1779349632894",
+    "detectTime": "2026-05-21 07:47:12",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "logo.png",
+    "wallSize": "914x1024",
+    "diseaseTypes": [
+      "缺损"
+    ],
+    "diseaseCount": 2,
+    "resultImageUrl": "/uploads/single/1779349629074-517870833.png",
+    "reportUrl": null
+  },
+  {
+    "id": 2,
+    "recordNo": "DET-1779349540581",
+    "detectTime": "2026-05-21 07:45:40",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "test_brick_wall.jpg",
+    "wallSize": "1280x1280",
+    "diseaseTypes": [
+      "泛碱"
+    ],
+    "diseaseCount": 2,
+    "resultImageUrl": "/uploads/single/1779349536873-515066184.jpg",
+    "reportUrl": null
+  },
+  {
+    "id": 1,
+    "recordNo": "DET-1779346523263",
+    "detectTime": "2026-05-21 06:55:23",
+    "status": "completed",
+    "projectName": "单图检测",
+    "imageName": "test_brick_wall.jpg",
+    "wallSize": "800x600",
+    "diseaseTypes": [
+      "风化",
+      "泛碱",
+      "裂缝",
+      "脱落",
+      "缺损"
+    ],
+    "diseaseCount": 8,
+    "resultImageUrl": "/uploads/single/1779346523223-29128578.jpg",
+    "reportUrl": null
+  }
+]
