@@ -13,10 +13,14 @@ const api = axios.create({
   }
 })
 
-// 请求拦截器
+// 请求拦截器：自动附带 access_token，便于后端识别用户进行历史/日志归属
 api.interceptors.request.use(
   (config) => {
-    // 可以在这里添加 token 等认证信息
+    const token = typeof localStorage !== 'undefined' ? localStorage.getItem('access_token') : null
+    if (token) {
+      config.headers = config.headers || {}
+      config.headers.Authorization = `Bearer ${token}`
+    }
     return config
   },
   (error) => {

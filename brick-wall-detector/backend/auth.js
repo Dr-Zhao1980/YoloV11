@@ -66,6 +66,16 @@ export function initAuth(app, __dirname) {
     next();
   }
 
+  // 可选认证：若携带有效 token 则填充 req.user，否则视为匿名继续
+  function optionalAuth(req, _res, next) {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const user = tokens.get(authHeader.slice(7));
+      if (user) req.user = user;
+    }
+    next();
+  }
+
   // ==================== 日志记录函数 ====================
   function addLog(entry) {
     const logsFile = path.join(dataDir, 'logs.json');
@@ -467,7 +477,7 @@ export function initAuth(app, __dirname) {
   });
 
   // 导出供检测接口使用的函数
-  return { authMiddleware, addLog, addHistoryRecord };
+  return { authMiddleware, optionalAuth, addLog, addHistoryRecord };
 }
 
 // 添加历史记录

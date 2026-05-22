@@ -330,24 +330,26 @@
                 </el-tab-pane>
 
                 <el-tab-pane label="原图+框" name="original">
-                  <div class="detection-image-wrap original-wrap" :style="detectionStageStyle">
-                    <img
-                      ref="detectionImageRef"
-                      :src="detectionResult.imagePath"
-                      class="det-image original-image"
-                      @load="onDetImageLoaded"
-                      crossorigin="anonymous"
-                    />
-                    <div class="bbox-layer" :style="bboxLayerStyle">
-                      <div
-                        v-for="(det, i) in detectionResult.detections"
-                        :key="det.id"
-                        class="bbox"
-                        :style="getBboxStyle(det)"
-                      >
-                        <span class="bbox-label" :style="getBboxLabelStyle(det, i)">
-                          {{ det.rawClassName || det.class }} {{ det.confidence.toFixed(2) }}
-                        </span>
+                  <div ref="detectionContainerRef" class="detection-image-wrap original-wrap">
+                    <div class="detection-stage" :style="detectionStageStyle">
+                      <img
+                        ref="detectionImageRef"
+                        :src="detectionResult.imagePath"
+                        class="det-image original-image"
+                        @load="onDetImageLoaded"
+                        crossorigin="anonymous"
+                      />
+                      <div class="bbox-layer" :style="bboxLayerStyle">
+                        <div
+                          v-for="(det, i) in detectionResult.detections"
+                          :key="det.id"
+                          class="bbox"
+                          :style="getBboxStyle(det)"
+                        >
+                          <span class="bbox-label" :style="getBboxLabelStyle(det, i)">
+                            {{ det.rawClassName || det.class }} {{ det.confidence.toFixed(2) }}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -702,6 +704,7 @@ const DISEASE_COLORS: Readonly<Record<string, string>> = Object.freeze({
 interface Detection {
   id: number
   class: string
+  rawClassName?: string
   confidence: number
   bbox: number[]
   area: number | null
@@ -727,6 +730,7 @@ interface QualityResult {
 // ==================== State ====================
 const uploadRef = ref()
 const detectionImageRef = ref<HTMLImageElement>()
+const detectionContainerRef = ref<HTMLDivElement>()
 const selectedFile = ref<File | null>(null)
 const previewUrl = ref('')
 const detecting = ref(false)
@@ -1191,15 +1195,16 @@ async function startDetection() {
 // ==================== Detection Image Scaling ====================
 function recalcImageScale() {
   const img = detectionImageRef.value
-  if (img && img.naturalWidth) {
-    const maxWidth = img.parentElement?.clientWidth || img.clientWidth || img.naturalWidth
-    const maxHeight = 560
-    const scale = Math.min(maxWidth / img.naturalWidth, maxHeight / img.naturalHeight, 1)
-    imageScale.value = scale
-    imageDisplay.value = {
-      width: Math.round(img.naturalWidth * scale),
-      height: Math.round(img.naturalHeight * scale)
-    }
+  if (!img || !img.naturalWidth) return
+  // 从稳定的外层容器测量可用宽度，避免被内层缩放尺寸反作用导致的回归 bug
+  const container = detectionContainerRef.value
+  const maxWidth = container?.clientWidth || img.naturalWidth
+  const maxHeight = 560
+  const scale = Math.min(maxWidth / img.naturalWidth, maxHeight / img.naturalHeight, 1)
+  imageScale.value = scale
+  imageDisplay.value = {
+    width: Math.round(img.naturalWidth * scale),
+    height: Math.round(img.naturalHeight * scale)
   }
 }
 function onDetImageLoaded() { recalcImageScale() }
@@ -1577,9 +1582,16 @@ async function generateReport() {
 .annotated-wrap { overflow:auto; display:flex; justify-content:center; align-items:flex-start; }
 .original-wrap {
   overflow:visible;
-  display:block;
+  display:flex;
+  justify-content:center;
+  align-items:flex-start;
   background:#f8fafc;
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.65);
+}
+.detection-stage {
+  position:relative;
+  display:block;
+  max-width:100%;
 }
 .det-image { max-width:100%; max-height:560px; object-fit:contain; display:block; margin:0 auto; }
 .original-image {

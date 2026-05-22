@@ -84,7 +84,7 @@ runtimeDirs.forEach(dir => {
 });
 
 // 初始化认证与系统管理模块
-const { authMiddleware: requireAuth, addLog: logAction, addHistoryRecord } = initAuth(app, __dirname);
+const { authMiddleware: requireAuth, optionalAuth, addLog: logAction, addHistoryRecord } = initAuth(app, __dirname);
 
 // 单图上传存储（原有 /api/detect 使用）
 const singleStorage = multer.diskStorage({
@@ -483,7 +483,7 @@ app.get('/api/models', (_req, res) => {
   res.json({ success: true, models: getAvailableModels() });
 });
 
-app.post('/api/detect', upload.single('image'), async (req, res) => {
+app.post('/api/detect', optionalAuth, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: '请上传图片' });
