@@ -271,29 +271,40 @@ def main():
     confidence = float(sys.argv[2]) if len(sys.argv) > 2 else 0.30
     iou_threshold = float(sys.argv[3]) if len(sys.argv) > 3 else 0.45
     imgsz = int(sys.argv[4]) if len(sys.argv) > 4 else 640
+    selected_model_path = sys.argv[5] if len(sys.argv) > 5 else ''
 
     if not os.path.exists(image_path):
         print(json.dumps({'success': False, 'message': f'图片不存在: {image_path}'}))
         sys.exit(1)
 
-    onnx_path = os.environ.get('YOLO_ONNX_PATH',
-                               os.path.join(BACKEND_DIR, 'models', 'best.onnx'))
-    pt_path = os.environ.get('YOLO_MODEL_PATH',
-                              os.path.join(BACKEND_DIR, 'models', 'best.pt'))
-
-    # 强制使用 best.pt 模型（通过 ONNX Runtime 加载 best.onnx 推理）
-    # best.onnx 由 best.pt 导出，精度一致，但内存占用远低于 ultralytics+torch
-    if not os.path.exists(onnx_path):
+    model_path = selected_model_path or os.environ.get('YOLO_ONNX_PATH',
+                                                       os.path.join(BACKEND_DIR, 'models', 'best.onnx'))
+    model_path = os.path.abspath(model_path)
+    models_dir = os.path.abspath(os.path.join(BACKEND_DIR, 'models'))
+    if not model_path.startswith(models_dir + os.sep):
         print(json.dumps({'success': False,
-                          'message': f'模型文件不存在: {onnx_path}'}))
+                          'message': '模型路径非法'}))
+        sys.exit(1)
+    if not os.path.exists(model_path):
+        print(json.dumps({'success': False,
+                          'message': f'模型文件不存在: {model_path}'}))
         sys.exit(1)
 
     try:
-        result = infer_onnxruntime(image_path, confidence, onnx_path,
-                                   iou_threshold=iou_threshold, imgsz=imgsz)
+        ext = os.path.splitext(model_path)[1].lower()
+        if ext == '.onnx':
+            result = infer_onnxruntime(image_path, confidence, model_path,
+                                       iou_threshold=iou_threshold, imgsz=imgsz)
+        elif ext == '.pt':
+            result = infer_ultralytics(image_path, confidence, model_path,
+                                       iou_threshold=iou_threshold, imgsz=imgsz)
+            result['engine'] = 'ultralytics'
+        else:
+            raise ValueError(f'不支持的模型格式: {ext}')
+        result['model_file'] = os.path.basename(model_path)
         print(json.dumps(result, ensure_ascii=False))
     except Exception as e:
-        sys.stderr.write(f'[onnxruntime] {type(e).__name__}: {e}\n')
+        sys.stderr.write(f'[model-inference] {type(e).__name__}: {e}\n')
         print(json.dumps({'success': False,
                           'message': f'模型推理失败: {type(e).__name__}: {e}'}))
         sys.exit(1)

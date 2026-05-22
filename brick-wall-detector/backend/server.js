@@ -95,6 +95,45 @@ const singleStorage = multer.diskStorage({
   }
 });
 const upload = multer({ storage: singleStorage, limits: { fileSize: 10 * 1024 * 1024 } });
+const modelsDir = path.join(__dirname, 'models');
+const supportedModelExts = new Set(['.pt', '.onnx']);
+
+function getAvailableModels() {
+  if (!fs.existsSync(modelsDir)) return [];
+  return fs.readdirSync(modelsDir)
+    .filter(file => supportedModelExts.has(path.extname(file).toLowerCase()))
+    .sort((a, b) => {
+      if (a === 'best.onnx') return -1;
+      if (b === 'best.onnx') return 1;
+      if (a === 'best.pt') return -1;
+      if (b === 'best.pt') return 1;
+      return a.localeCompare(b);
+    })
+    .map(file => {
+      const fullPath = path.join(modelsDir, file);
+      const stat = fs.statSync(fullPath);
+      const ext = path.extname(file).toLowerCase();
+      return {
+        id: file,
+        name: path.basename(file, ext),
+        file,
+        type: ext.slice(1),
+        size: stat.size,
+        updatedAt: stat.mtime.toISOString(),
+        recommended: file === 'best.onnx'
+      };
+    });
+}
+
+function resolveModelPath(modelId) {
+  const available = getAvailableModels();
+  const selected = available.find(model => model.id === modelId) || available[0];
+  if (!selected) return null;
+  return {
+    ...selected,
+    path: path.join(modelsDir, selected.file)
+  };
+}
 
 // 全景大图上传存储（立面普查模式使用）
 const panoramaStorage = multer.diskStorage({
@@ -440,6 +479,10 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.get('/api/models', (_req, res) => {
+  res.json({ success: true, models: getAvailableModels() });
+});
+
 app.post('/api/detect', upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
@@ -448,8 +491,10 @@ app.post('/api/detect', upload.single('image'), async (req, res) => {
 
     const imagePath = `/uploads/single/${req.file.filename}`;
     const brickLengthMm = parseInt(req.body.brickLengthMm) || 240;
-    const paiApiUrl = process.env.PAI_API_URL;
-    const paiApiToken = process.env.PAI_API_TOKEN;
+    const selectedModel = resolveModelPath(req.body.modelId);
+    if (!selectedModel) {
+      return res.status(500).json({ success: false, message: '未找到可用模型文件' });
+    }
 
     // 前端传入的模型推理参数（带合理范围限制）
     const modelConf = Math.max(0.05, Math.min(0.95,
@@ -482,7 +527,7 @@ app.post('/api/detect', upload.single('image'), async (req, res) => {
         const inferScript = path.join(__dirname, 'run_inference.py');
         const { stdout } = await execFileAsync(
           'python3',
-          [inferScript, req.file.path, String(modelConf), String(iouThreshold), String(inferImgsz)],
+          [inferScript, req.file.path, String(modelConf), String(iouThreshold), String(inferImgsz), selectedModel.path],
           { timeout: 90000, maxBuffer: 1024 * 1024 * 10 }
         );
         const localResult = JSON.parse(stdout.trim());
@@ -501,8 +546,20 @@ app.post('/api/detect', upload.single('image'), async (req, res) => {
           if (localResult.coord_txt_content) {
             result.coordTxtContent = localResult.coord_txt_content;
           }
-          result.inferenceParams = { modelConf, iouThreshold, inferImgsz };
-          console.log(`[Detect] Python子进程推理完成，检出 ${result.totalDetections} 处病害 (conf=${modelConf} iou=${iouThreshold} imgsz=${inferImgsz})`);
+          result.modelInfo = {
+            ...result.modelInfo,
+            name: selectedModel.name,
+            version: selectedModel.file,
+            platform: localResult.engine === 'ultralytics' ? '本地PyTorch推理' : '本地ONNX推理'
+          };
+          result.selectedModel = {
+            id: selectedModel.id,
+            name: selectedModel.name,
+            file: selectedModel.file,
+            type: selectedModel.type
+          };
+          result.inferenceParams = { modelConf, iouThreshold, inferImgsz, modelId: selectedModel.id };
+          console.log(`[Detect] Python子进程推理完成，模型=${selectedModel.file}，检出 ${result.totalDetections} 处病害 (conf=${modelConf} iou=${iouThreshold} imgsz=${inferImgsz})`);
         }
       } catch (localErr) {
         console.error('[Detect] Python推理失败:');
@@ -524,7 +581,7 @@ app.post('/api/detect', upload.single('image'), async (req, res) => {
     }
 
     result.isDemo = isDemo;
-    result.inferenceParams = result.inferenceParams || { modelConf, iouThreshold, inferImgsz };
+    result.inferenceParams = result.inferenceParams || { modelConf, iouThreshold, inferImgsz, modelId: selectedModel.id };
 
     result.brickLengthMm = brickLengthMm;
 

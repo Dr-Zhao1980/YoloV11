@@ -59,6 +59,17 @@ export interface ModelParams {
   modelConf: number
   iouThreshold: number
   imageSize: number
+  modelId?: string
+}
+
+export interface AvailableModel {
+  id: string
+  name: string
+  file: string
+  type: string
+  size: number
+  updatedAt: string
+  recommended?: boolean
 }
 
 export interface DetectionResult {
@@ -80,7 +91,8 @@ export interface DetectionResult {
   annotatedImageUrl?: string
   coordTxtContent?: string
   isDemo?: boolean
-  inferenceParams?: { modelConf: number; iouThreshold: number; inferImgsz: number }
+  selectedModel?: Pick<AvailableModel, 'id' | 'name' | 'file' | 'type'>
+  inferenceParams?: { modelConf: number; iouThreshold: number; inferImgsz: number; modelId?: string }
 }
 
 export interface Report {
@@ -177,6 +189,10 @@ export async function checkHealth(): Promise<{ status: string; timestamp: string
   return api.get('/health')
 }
 
+export async function getModels(): Promise<{ success: boolean; models: AvailableModel[] }> {
+  return api.get('/models')
+}
+
 /**
  * 病害检测
  * @param imageFile 图片文件
@@ -197,6 +213,8 @@ export async function detectDisease(
     formData.append('iouThreshold', String(modelParams.iouThreshold))
   if (modelParams?.imageSize !== undefined)
     formData.append('imageSize', String(modelParams.imageSize))
+  if (modelParams?.modelId)
+    formData.append('modelId', modelParams.modelId)
   
   return api.post('/detect', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },

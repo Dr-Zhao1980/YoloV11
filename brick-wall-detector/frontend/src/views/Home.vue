@@ -78,6 +78,8 @@
             <el-icon><Setting /></el-icon>
             <span>模型推理参数</span>
             <el-tag size="small" type="info" effect="plain" class="mp-summary">
+              {{ selectedModelName }}
+              &nbsp;·&nbsp;
               置信度 {{ modelParams.modelConf.toFixed(2) }}
               &nbsp;·&nbsp; IoU {{ modelParams.iouThreshold.toFixed(2) }}
               &nbsp;·&nbsp; {{ modelParams.imageSize }}px
@@ -86,6 +88,35 @@
           </div>
           <transition name="slide-down">
             <div v-show="showModelParams" class="mp-body">
+              <div class="mp-row">
+                <div class="mp-label">
+                  <span>检测模型</span>
+                  <el-tooltip placement="top" content="选择用于本次图像处理的模型；新增模型文件放入 backend/models 后会自动出现在列表中">
+                    <el-icon class="help-icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </div>
+                <div class="mp-control mp-control-select">
+                  <el-select
+                    v-model="modelParams.modelId"
+                    size="small"
+                    class="model-select"
+                    placeholder="请选择模型"
+                    :loading="modelsLoading"
+                    :disabled="availableModels.length === 0"
+                  >
+                    <el-option
+                      v-for="model in availableModels"
+                      :key="model.id"
+                      :label="`${model.name} (${model.type.toUpperCase()}, ${formatModelSize(model.size)})`"
+                      :value="model.id"
+                    >
+                      <span>{{ model.name }}</span>
+                      <el-tag v-if="model.recommended" size="small" type="success" effect="plain">推荐</el-tag>
+                      <span class="model-option-meta">{{ model.file }} · {{ formatModelSize(model.size) }}</span>
+                    </el-option>
+                  </el-select>
+                </div>
+              </div>
               <!-- 置信度 -->
               <div class="mp-row">
                 <div class="mp-label">
@@ -155,7 +186,7 @@
               <div class="mp-reset">
                 <el-button
                   size="small" plain
-                  @click="modelParams = { modelConf: 0.30, iouThreshold: 0.45, imageSize: 640 }"
+                  @click="resetModelParams"
                 >
                   恢复默认值
                 </el-button>
@@ -299,23 +330,25 @@
                 </el-tab-pane>
 
                 <el-tab-pane label="原图+框" name="original">
-                  <div class="detection-image-wrap">
+                  <div class="detection-image-wrap original-wrap" :style="detectionStageStyle">
                     <img
                       ref="detectionImageRef"
                       :src="detectionResult.imagePath"
-                      class="det-image"
+                      class="det-image original-image"
                       @load="onDetImageLoaded"
                       crossorigin="anonymous"
                     />
-                    <div
-                      v-for="(det, i) in detectionResult.detections"
-                      :key="det.id"
-                      class="bbox"
-                      :style="getBboxStyle(det)"
-                    >
-                      <span class="bbox-label" :style="getBboxLabelStyle(det, i)">
-                        {{ det.rawClassName || det.class }} {{ det.confidence.toFixed(2) }}
-                      </span>
+                    <div class="bbox-layer" :style="bboxLayerStyle">
+                      <div
+                        v-for="(det, i) in detectionResult.detections"
+                        :key="det.id"
+                        class="bbox"
+                        :style="getBboxStyle(det)"
+                      >
+                        <span class="bbox-label" :style="getBboxLabelStyle(det, i)">
+                          {{ det.rawClassName || det.class }} {{ det.confidence.toFixed(2) }}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </el-tab-pane>
@@ -644,8 +677,8 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, getFacadeReport } from '../api'
-import type { DetectionResult, FacadeResult, ModelParams } from '../api'
+import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, getFacadeReport, getModels } from '../api'
+import type { DetectionResult, FacadeResult, ModelParams, AvailableModel } from '../api'
 import RepairReport from '../components/RepairReport.vue'
 import ShootingGuide from '../components/ShootingGuide.vue'
 import DashboardView from '../components/DashboardView.vue'
@@ -700,6 +733,7 @@ const detecting = ref(false)
 const progress = ref(0)
 const detectionResult = ref<DetectionResult | null>(null)
 const imageScale = ref(1)
+const imageDisplay = ref({ width: 0, height: 0 })
 const generatingReport = ref(false)
 const reportData = ref<any>(null)
 
@@ -711,6 +745,8 @@ const modelParams = ref<ModelParams>({
   iouThreshold: 0.45,
   imageSize: 640
 })
+const availableModels = ref<AvailableModel[]>([])
+const modelsLoading = ref(false)
 const showModelParams = ref(false)
 // 图片质量检测结果（对应三步法指南的后端软质检）
 const imageQuality = ref<QualityResult>({
@@ -869,8 +905,53 @@ const diseaseSummary = computed(() => detectionResult.value?.summary || {})
 const weatheringArea = computed(() => diseaseSummary.value?.['风化']?.totalArea || 0)
 const efflorescenceArea = computed(() => diseaseSummary.value?.['泛碱']?.totalArea || 0)
 const isDemo = computed(() => !!detectionResult.value?.isDemo)
+const selectedModelName = computed(() => {
+  const model = availableModels.value.find(item => item.id === modelParams.value.modelId)
+  return model ? model.name : '默认模型'
+})
+const detectionStageStyle = computed(() => {
+  if (!imageDisplay.value.width || !imageDisplay.value.height) return {}
+  return {
+    width: `${imageDisplay.value.width}px`,
+    height: `${imageDisplay.value.height}px`
+  }
+})
+const bboxLayerStyle = computed(() => ({
+  width: `${imageDisplay.value.width}px`,
+  height: `${imageDisplay.value.height}px`
+}))
 
 // ==================== Helpers ====================
+function formatModelSize(size: number): string {
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)}MB`
+  if (size >= 1024) return `${(size / 1024).toFixed(1)}KB`
+  return `${size}B`
+}
+
+function resetModelParams() {
+  modelParams.value = {
+    modelConf: 0.30,
+    iouThreshold: 0.45,
+    imageSize: 640,
+    modelId: availableModels.value[0]?.id
+  }
+}
+
+async function loadModels() {
+  try {
+    modelsLoading.value = true
+    const result = await getModels()
+    availableModels.value = result.models || []
+    if (!modelParams.value.modelId && availableModels.value.length > 0) {
+      modelParams.value.modelId = availableModels.value[0].id
+    }
+  } catch (error: any) {
+    ElMessage.warning(error.message || '模型列表加载失败')
+  } finally {
+    modelsLoading.value = false
+  }
+}
+
 function diseaseColor(name: string): string {
   return DISEASE_COLORS[name] || '#999'
 }
@@ -1111,7 +1192,14 @@ async function startDetection() {
 function recalcImageScale() {
   const img = detectionImageRef.value
   if (img && img.naturalWidth) {
-    imageScale.value = img.clientWidth / img.naturalWidth
+    const maxWidth = img.parentElement?.clientWidth || img.clientWidth || img.naturalWidth
+    const maxHeight = 560
+    const scale = Math.min(maxWidth / img.naturalWidth, maxHeight / img.naturalHeight, 1)
+    imageScale.value = scale
+    imageDisplay.value = {
+      width: Math.round(img.naturalWidth * scale),
+      height: Math.round(img.naturalHeight * scale)
+    }
   }
 }
 function onDetImageLoaded() { recalcImageScale() }
@@ -1144,6 +1232,7 @@ function onWindowResize() {
 }
 
 onMounted(() => {
+  loadModels()
   window.addEventListener('resize', onWindowResize)
   window.addEventListener('scroll', onScroll, { passive: true })
 })
@@ -1168,13 +1257,24 @@ function getBboxStyle(det: Detection) {
 
 function getBboxLabelStyle(det: Detection, index: number) {
   const bg = diseaseColor(det.class)
-  // Alternate label position: even=top, odd=bottom to avoid overlap
-  const isBottom = index % 2 === 1
+  const s = imageScale.value
+  const x = det.bbox[0] * s
+  const y = det.bbox[1] * s
+  const w = det.bbox[2] * s
+  const labelWidth = Math.max(72, (det.rawClassName || det.class).length * 7 + 36)
+  const preferBottom = y < 26 || index % 2 === 1
+  const alignRight = x + labelWidth > imageDisplay.value.width
+  const alignCenter = !alignRight && w < labelWidth && x > labelWidth / 2
   return {
     background: bg,
-    ...(isBottom
-      ? { top: 'auto', bottom: '-24px', left: '0', transform: 'none' }
-      : { top: '-24px', bottom: 'auto', left: '0', transform: 'none' })
+    ...(preferBottom
+      ? { top: '100%', bottom: 'auto', marginTop: '4px' }
+      : { top: 'auto', bottom: '100%', marginBottom: '4px' }),
+    ...(alignRight
+      ? { right: '0', left: 'auto', transform: 'none' }
+      : alignCenter
+        ? { left: '50%', right: 'auto', transform: 'translateX(-50%)' }
+        : { left: '0', right: 'auto', transform: 'none' })
   }
 }
 
@@ -1471,19 +1571,41 @@ async function generateReport() {
 
 /* ===================== DETECTION RESULTS ===================== */
 .detection-image-wrap {
-  position:relative; border:1px solid #dde5f0; border-radius:12px; overflow:hidden; background:#f0f4fa;
-  max-height:560px;
+  position:relative; border:1px solid #dde5f0; border-radius:12px; background:#f0f4fa;
+  max-height:560px; margin:0 auto;
 }
-.det-image { width:100%; max-height:560px; object-fit:contain; display:block; }
+.annotated-wrap { overflow:auto; display:flex; justify-content:center; align-items:flex-start; }
+.original-wrap {
+  overflow:visible;
+  display:block;
+  background:#f8fafc;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.65);
+}
+.det-image { max-width:100%; max-height:560px; object-fit:contain; display:block; margin:0 auto; }
+.original-image {
+  width:100%;
+  height:100%;
+  object-fit:fill;
+  border-radius:12px;
+}
+.bbox-layer {
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  overflow:visible;
+  z-index:2;
+}
 .bbox {
   position:absolute; border:2.5px solid; border-radius:4px; cursor:pointer;
-  transition:box-shadow .2s, transform .2s;
+  transition:box-shadow .2s, transform .2s; pointer-events:auto;
+  box-shadow:0 0 0 1px rgba(255,255,255,.75), 0 2px 8px rgba(15,23,42,.18);
 }
 .bbox:hover { box-shadow:0 0 16px rgba(0,0,0,.3); transform:scale(1.02); z-index:10; }
 .bbox-label {
   position:absolute; color:#fff;
-  font-size:10px; padding:2px 7px; border-radius:3px; white-space:nowrap; font-weight:600; pointer-events:none;
-  box-shadow:0 1px 4px rgba(0,0,0,.25); line-height:1.4; z-index:5;
+  font-size:11px; padding:3px 7px; border-radius:5px; white-space:nowrap; font-weight:700; pointer-events:none;
+  box-shadow:0 2px 8px rgba(0,0,0,.28); line-height:1.25; z-index:5; max-width:min(180px, 60vw);
+  overflow:hidden; text-overflow:ellipsis;
 }
 .note-tag { border-radius:12px; }
 
