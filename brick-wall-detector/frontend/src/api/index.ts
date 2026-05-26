@@ -197,6 +197,10 @@ export async function getModels(): Promise<{ success: boolean; models: Available
   return api.get('/models')
 }
 
+export async function getModelDefaults(): Promise<{ success: boolean; modelConf: number; iouThreshold: number }> {
+  return api.get('/model-defaults')
+}
+
 /**
  * 病害检测
  * @param imageFile 图片文件

@@ -12,5 +12,19 @@
     "password": "test123456",
     "nickname": "测试用户",
     "role": "user"
+  },
+  {
+    "id": 3,
+    "username": "r21200218",
+    "password": "zyr20030218",
+    "nickname": "r21200218",
+    "role": "user"
+  },
+  {
+    "id": 4,
+    "username": "Y20228",
+    "password": "zyr20030218",
+    "nickname": "Y20228",
+    "role": "user"
   }
 ]

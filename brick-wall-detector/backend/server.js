@@ -135,6 +135,25 @@ function resolveModelPath(modelId) {
   };
 }
 
+// 从 settings.json 读取系统默认置信度（管理员在系统设置页修改后即时生效）
+function getDefaultModelConf() {
+  try {
+    const settingsPath = path.join(__dirname, 'data/settings.json');
+    const s = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    const c = parseFloat(s.confidenceThreshold);
+    return Number.isFinite(c) && c >= 0.05 && c <= 0.95 ? c : 0.30;
+  } catch { return 0.30; }
+}
+
+function getDefaultIouThreshold() {
+  try {
+    const settingsPath = path.join(__dirname, 'data/settings.json');
+    const s = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    const t = parseFloat(s.iouThreshold);
+    return Number.isFinite(t) && t >= 0.10 && t <= 0.90 ? t : 0.45;
+  } catch { return 0.45; }
+}
+
 // 全景大图上传存储（立面普查模式使用）
 const panoramaStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, path.join(__dirname, 'uploads/panoramas')),
@@ -479,6 +498,15 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// \u516c\u5f00\u63a5\u53e3\uff1a\u8fd4\u56de\u7cfb\u7edf\u9ed8\u8ba4\u63a8\u7406\u53c2\u6570\uff08\u65e0\u9700\u767b\u5f55\uff09
+app.get('/api/model-defaults', (_req, res) => {
+  res.json({
+    success: true,
+    modelConf:    getDefaultModelConf(),
+    iouThreshold: getDefaultIouThreshold()
+  });
+});
+
 app.get('/api/models', (_req, res) => {
   res.json({ success: true, models: getAvailableModels() });
 });
@@ -500,7 +528,7 @@ app.post('/api/detect', optionalAuth, upload.single('image'), async (req, res) =
     const _parsedConf = parseFloat(req.body?.modelConf);
     const modelConf = Math.max(0.05, Math.min(0.95,
       !isNaN(_parsedConf) ? _parsedConf
-        : (!isNaN(parseFloat(process.env.YOLO_CONFIDENCE)) ? parseFloat(process.env.YOLO_CONFIDENCE) : 0.30)
+        : (!isNaN(parseFloat(process.env.YOLO_CONFIDENCE)) ? parseFloat(process.env.YOLO_CONFIDENCE) : getDefaultModelConf())
     ));
     console.log(`[Detect] 参数接收 conf=${modelConf}(raw="${req.body?.modelConf}") iou=${req.body?.iouThreshold} imgsz=${req.body?.imageSize}`);
     const iouThreshold = Math.max(0.10, Math.min(0.90,
@@ -1543,8 +1571,8 @@ app.post('/api/facade/analyze/:jobId', async (req, res) => {
     // ── 置信度 & IoU 阈值（与单图检测相同的合理范围限制）──
     const _rc = parseFloat(req.body?.modelConf);
     const _ri = parseFloat(req.body?.iouThreshold);
-    job.modelConf     = Number.isFinite(_rc) ? Math.max(0.05, Math.min(0.95, _rc)) : (job.modelConf     ?? 0.30);
-    job.iouThreshold  = Number.isFinite(_ri) ? Math.max(0.10, Math.min(0.90, _ri)) : (job.iouThreshold  ?? 0.45);
+    job.modelConf     = Number.isFinite(_rc) ? Math.max(0.05, Math.min(0.95, _rc)) : (job.modelConf     ?? getDefaultModelConf());
+    job.iouThreshold  = Number.isFinite(_ri) ? Math.max(0.10, Math.min(0.90, _ri)) : (job.iouThreshold  ?? getDefaultIouThreshold());
 
     // ── 自定义分割线（用户拖拽调整的切片位置，0..1 分数数组）──
     const rawV = req.body?.customVDividers;

@@ -34,6 +34,14 @@ interface FacadeGrid {
   tileIds: string[]
 }
 
+interface FacadeDetection {
+  id: number
+  class: string
+  confidence: number
+  globalBbox: number[]
+  globalPolygon?: Array<{ x: number; y: number }>
+}
+
 const props = defineProps<{
   imageUrl: string
   imageWidth: number
@@ -41,6 +49,7 @@ const props = defineProps<{
   wallWidthM: number
   wallHeightM: number
   grids: FacadeGrid[]
+  detections?: FacadeDetection[]
 }>()
 
 const emit = defineEmits<{
@@ -92,6 +101,7 @@ function drawCanvas() {
 
   drawHeatmap(ctx, scale)
   drawGridLines(ctx, scale)
+  drawDetectionBoxes(ctx, scale)
 }
 
 function drawHeatmap(ctx: CanvasRenderingContext2D, scale: number) {
@@ -120,6 +130,62 @@ function drawGridLines(ctx: CanvasRenderingContext2D, scale: number) {
     const w = (grid.widthM / props.wallWidthM) * props.imageWidth * scale
     const h = (grid.heightM / props.wallHeightM) * props.imageHeight * scale
     ctx.strokeRect(x, y, w, h)
+  })
+
+  ctx.restore()
+}
+
+const DISEASE_COLORS: Record<string, string> = {
+  '风化': '#e74c3c',
+  '泛碱': '#3498db',
+  '裂缝': '#f39c12',
+  '植物附着': '#9b59b6',
+  '缺损': '#1abc9c'
+}
+
+function drawDetectionBoxes(ctx: CanvasRenderingContext2D, scale: number) {
+  if (!props.detections || props.detections.length === 0) return
+
+  ctx.save()
+  ctx.lineWidth = Math.max(2, Math.min(4, 2 / scale))
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.45)'
+  ctx.shadowBlur = 4
+
+  props.detections.forEach(det => {
+    const bbox = det.globalBbox
+    if (!bbox || bbox.length < 4) return
+
+    const x = bbox[0] * scale
+    const y = bbox[1] * scale
+    const w = bbox[2] * scale
+    const h = bbox[3] * scale
+
+    const color = DISEASE_COLORS[det.class] || '#ffffff'
+    ctx.strokeStyle = color
+    if (det.globalPolygon && det.globalPolygon.length >= 3) {
+      ctx.beginPath()
+      det.globalPolygon.forEach((point, index) => {
+        const px = point.x * scale
+        const py = point.y * scale
+        if (index === 0) ctx.moveTo(px, py)
+        else ctx.lineTo(px, py)
+      })
+      ctx.closePath()
+      ctx.stroke()
+    } else {
+      ctx.strokeRect(x, y, w, h)
+    }
+
+    ctx.shadowBlur = 0
+    ctx.fillStyle = color
+    const labelY = Math.max(0, y - 18)
+    ctx.fillRect(x, labelY, Math.max(72, Math.min(w, 120)), 18)
+
+    ctx.fillStyle = '#ffffff'
+    ctx.font = '11px sans-serif'
+    const label = `${det.class} ${(det.confidence * 100).toFixed(0)}%`
+    ctx.fillText(label, x + 4, labelY + 14)
+    ctx.shadowBlur = 4
   })
 
   ctx.restore()
@@ -160,7 +226,7 @@ function handleCanvasMove(event: MouseEvent) {
 }
 
 watch(
-  () => [props.imageUrl, props.grids],
+  () => [props.imageUrl, props.grids, props.detections],
   async () => {
     await nextTick()
     loadImage()

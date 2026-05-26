@@ -33,13 +33,32 @@
               <span v-if="modelOptions.length === 0" class="hint-text">暂无可选模型</span>
             </el-form-item>
             <el-form-item label="置信度阈值">
-              <el-slider
-                v-model="settingsForm.confidenceThreshold"
-                :min="0.01"
-                :max="1"
-                :step="0.01"
-                show-input
-              />
+              <div style="width:100%">
+                <el-slider
+                  v-model="settingsForm.confidenceThreshold"
+                  :min="0.05" :max="0.95" :step="0.05"
+                  :marks="{ 0.1:'0.1', 0.3:'0.3', 0.5:'0.5', 0.7:'0.7' }"
+                  show-input
+                  :format-tooltip="(v: number) => v.toFixed(2)"
+                />
+                <div style="font-size:12px;color:#909399;margin-top:6px">
+                  全局默认置信度，前端检测面板未修改时使用此值（当前 {{ settingsForm.confidenceThreshold.toFixed(2) }}）
+                </div>
+              </div>
+            </el-form-item>
+            <el-form-item label="IoU 阈值">
+              <div style="width:100%">
+                <el-slider
+                  v-model="settingsForm.iouThreshold"
+                  :min="0.10" :max="0.90" :step="0.05"
+                  :marks="{ 0.2:'0.2', 0.45:'0.45', 0.6:'0.6' }"
+                  show-input
+                  :format-tooltip="(v: number) => v.toFixed(2)"
+                />
+                <div style="font-size:12px;color:#909399;margin-top:6px">
+                  NMS 去重 IoU 阈值，全局默认（当前 {{ settingsForm.iouThreshold.toFixed(2) }}）
+                </div>
+              </div>
             </el-form-item>
             <el-form-item label="生成热力图">
               <el-switch v-model="settingsForm.enableHeatmap" />
@@ -130,7 +149,8 @@ const settingsForm = reactive({
   systemName: '',
   systemVersion: '',
   modelVersion: '',
-  confidenceThreshold: 0.35,
+  confidenceThreshold: 0.30,
+  iouThreshold: 0.45,
   enableHeatmap: true,
   enableAutoReport: true,
   storageType: '',

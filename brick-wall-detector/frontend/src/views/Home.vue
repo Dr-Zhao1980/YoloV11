@@ -709,7 +709,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, getFacadeReport, getModels } from '../api'
+import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, getFacadeReport, getModels, getModelDefaults } from '../api'
 import type { DetectionResult, FacadeResult, ModelParams, AvailableModel } from '../api'
 import RepairReport from '../components/RepairReport.vue'
 import ShootingGuide from '../components/ShootingGuide.vue'
@@ -1021,12 +1021,17 @@ function formatModelSize(size: number): string {
   return `${size}B`
 }
 
-function resetModelParams() {
-  modelParams.value = {
-    modelConf: 0.30,
-    iouThreshold: 0.45,
-    imageSize: 640,
-    modelId: availableModels.value[0]?.id
+async function resetModelParams() {
+  try {
+    const defaults = await getModelDefaults()
+    modelParams.value = {
+      modelConf:    defaults.modelConf    ?? 0.30,
+      iouThreshold: defaults.iouThreshold ?? 0.45,
+      imageSize: 640,
+      modelId: availableModels.value[0]?.id
+    }
+  } catch {
+    modelParams.value = { modelConf: 0.30, iouThreshold: 0.45, imageSize: 640, modelId: availableModels.value[0]?.id }
   }
 }
 
@@ -1333,8 +1338,17 @@ function onWindowResize() {
   resizeRaf = requestAnimationFrame(recalcImageScale)
 }
 
-onMounted(() => {
+onMounted(async () => {
+  // 加载模型列表
   loadModels()
+  // 从系统设置加载默认推理参数（攮管员设置的置信度即将展示在滚块上）
+  try {
+    const defaults = await getModelDefaults()
+    if (defaults.success) {
+      modelParams.value.modelConf    = defaults.modelConf    ?? modelParams.value.modelConf
+      modelParams.value.iouThreshold = defaults.iouThreshold ?? modelParams.value.iouThreshold
+    }
+  } catch { /* 默认就用初始化值 */ }
   window.addEventListener('resize', onWindowResize)
   window.addEventListener('scroll', onScroll, { passive: true })
 })
