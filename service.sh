@@ -75,7 +75,46 @@ is_debug_running() {
 }
 
 port_pid() {
-  lsof -t -i:"$PORT" 2>/dev/null | head -1 || true
+  local pid
+  # 方法1: lsof（标准但需要权限，root 进程可能不可见）
+  pid=$(lsof -t -i:"$PORT" 2>/dev/null | head -1)
+  [ -n "$pid" ] && echo "$pid" && return
+  # 方法2: fuser
+  pid=$(fuser "${PORT}/tcp" 2>/dev/null | tr -d ' \t')
+  [ -n "$pid" ] && echo "$pid" && return
+  # 方法3: ss（Linux，解析 pid=xxx）
+  pid=$(ss -tlnp 2>/dev/null | grep -E ":${PORT}[[:space:]]" | grep -oP 'pid=\K[0-9]+' | head -1)
+  [ -n "$pid" ] && echo "$pid" && return
+  # 方法4: nc 探活——有进程但无法取 PID（可能是 root 进程）
+  if nc -z 127.0.0.1 "$PORT" 2>/dev/null; then echo "unknown"; fi
+}
+
+# 强制释放端口（多种方式）
+free_port() {
+  local pids
+  pids=$(lsof -t -i:"$PORT" 2>/dev/null)
+  if [ -n "$pids" ]; then
+    # shellcheck disable=SC2086
+    kill -9 $pids 2>/dev/null || true
+    sleep 0.8; return
+  fi
+  pids=$(fuser "${PORT}/tcp" 2>/dev/null)
+  if [ -n "$pids" ]; then
+    # shellcheck disable=SC2086
+    kill -9 $pids 2>/dev/null || true
+    sleep 0.8; return
+  fi
+  # 精确匹配当前项目的 server.js
+  pkill -9 -f "${APP_DIR}/backend/server.js" 2>/dev/null || true
+  pkill -9 -f "node.*server\.js" 2>/dev/null || true
+  sleep 0.5
+  # 若端口仍被占用（root 进程），尝试 sudo
+  if nc -z 127.0.0.1 "$PORT" 2>/dev/null; then
+    warn "进程可能以 root 运行，尝试 sudo 清理..."
+    sudo pkill -9 -f "${APP_DIR}/backend/server.js" 2>/dev/null || true
+    sudo pkill -9 -f "node.*server\.js" 2>/dev/null || true
+    sleep 0.8
+  fi
 }
 
 ensure_dist() {
@@ -105,8 +144,19 @@ cmd_start() {
   local existing
   existing=$(port_pid)
   if [ -n "$existing" ]; then
-    warn "启动失败！端口 $PORT 被进程 $existing 占用。请先用菜单【2】停止服务。"
-    return 1
+    if [ "$existing" = "unknown" ]; then
+      warn "端口 $PORT 已被占用（无法获取 PID，可能是 root 进程或权限不足）"
+    else
+      warn "端口 $PORT 被进程 $existing 占用"
+    fi
+    read -r -p "  ⚡ 是否强制清理并继续？[Y/n]: " yn
+    case "${yn:-Y}" in [Yy]*) free_port ;; *) info "已取消"; return 1 ;; esac
+    # 确认端口已释放
+    existing=$(port_pid)
+    if [ -n "$existing" ]; then
+      err "端口 $PORT 清理失败，仍被占用。请手动处理后重试。"
+      return 1
+    fi
   fi
 
   ensure_dist || return 1
@@ -146,8 +196,19 @@ cmd_start_debug() {
   local existing
   existing=$(port_pid)
   if [ -n "$existing" ]; then
-    warn "启动失败！端口 $PORT 被进程 $existing 占用。"
-    return 1
+    if [ "$existing" = "unknown" ]; then
+      warn "端口 $PORT 已被占用（无法获取 PID，可能是 root 进程或权限不足）"
+    else
+      warn "端口 $PORT 被进程 $existing 占用"
+    fi
+    read -r -p "  ⚡ 是否强制清理并继续启动调试模式？[Y/n]: " yn
+    case "${yn:-Y}" in [Yy]*) free_port ;; *) info "已取消"; return 1 ;; esac
+    existing=$(port_pid)
+    if [ -n "$existing" ]; then
+      err "端口 $PORT 清理失败，仍被占用。请手动处理后重试。"
+      return 1
+    fi
+    ok "端口 $PORT 已释放，继续启动调试模式..."
   fi
 
   ensure_dist || return 1
@@ -295,18 +356,22 @@ cmd_logs() {
 cmd_debug_logs() {
   local latest="$LOG_DIR/debug-latest.log"
   if [ ! -L "$latest" ] && [ ! -f "$latest" ]; then
-    # 退而求其次：找最新的 debug-*.log
     latest=$(ls -t "$LOG_DIR"/debug-*.log 2>/dev/null | head -1)
   fi
   if [ -z "$latest" ] || [ ! -e "$latest" ]; then
     warn "暂无调试日志文件。请先在菜单【7】启动调试模式。"
     return 1
   fi
-  info "实时滚动显示调试日志: $latest"
-  info "（包含每个请求的方法/路径/状态码/耗时 + body 摘要）"
+  local lines
+  lines=$(wc -l < "$latest" 2>/dev/null || echo 0)
+  info "实时滚动显示调试日志 ($lines 行): $latest"
+  info "内容: 请求方法/路径/状态码/耗时 · 切片推理过程 · 错误堆栈"
+  echo "------------------------------------------------"
+  echo -e "${YELLOW}[提示] 按 Ctrl+C 退出日志查看${NC}"
   echo "------------------------------------------------"
   trap 'echo -e "\n${YELLOW}>> 已退出日志查看${NC}"' SIGINT
-  tail -n 200 -f "$latest"
+  # 首次显示最后 300 行，然后持续追踪新增内容
+  tail -n 300 -f "$latest"
   trap - SIGINT
 }
 

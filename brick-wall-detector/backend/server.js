@@ -84,7 +84,7 @@ runtimeDirs.forEach(dir => {
 });
 
 // 初始化认证与系统管理模块
-const { authMiddleware: requireAuth, optionalAuth, addLog: logAction, addHistoryRecord } = initAuth(app, __dirname);
+const { authMiddleware: requireAuth, optionalAuth, addLog: logAction, addHistoryRecord } = initAuth(app, __dirname, { resolveModelPath });
 
 // 单图上传存储（原有 /api/detect 使用）
 const singleStorage = multer.diskStorage({
@@ -497,9 +497,12 @@ app.post('/api/detect', optionalAuth, upload.single('image'), async (req, res) =
     }
 
     // 前端传入的模型推理参数（带合理范围限制）
+    const _parsedConf = parseFloat(req.body?.modelConf);
     const modelConf = Math.max(0.05, Math.min(0.95,
-      parseFloat(req.body.modelConf) || parseFloat(process.env.YOLO_CONFIDENCE) || 0.30
+      !isNaN(_parsedConf) ? _parsedConf
+        : (!isNaN(parseFloat(process.env.YOLO_CONFIDENCE)) ? parseFloat(process.env.YOLO_CONFIDENCE) : 0.30)
     ));
+    console.log(`[Detect] 参数接收 conf=${modelConf}(raw="${req.body?.modelConf}") iou=${req.body?.iouThreshold} imgsz=${req.body?.imageSize}`);
     const iouThreshold = Math.max(0.10, Math.min(0.90,
       parseFloat(req.body.iouThreshold) || 0.45
     ));
@@ -1085,6 +1088,7 @@ function createFacadeJobRecord(params) {
     gridSizeM: params.gridSizeM || 1,
     tileSize: params.tileSize || 1280,
     overlapRatio: params.overlapRatio || 0.15,
+    gridMode: params.gridMode || null,
     status: 'uploaded',
     progress: 0,
     tiles: [],
@@ -1134,35 +1138,194 @@ async function createFacadeTiles(job) {
   return tileRecords;
 }
 
-// --- PAI 分片检测 ---
-async function callPaiForTile(tilePath) {
-  const paiApiUrl = process.env.PAI_API_URL;
-  const paiApiToken = process.env.PAI_API_TOKEN;
+// --- N×N 网格切片（支持自定义分割线 customVDividers / customHDividers，带 10% 边缘重叠防漏检） ---
+async function createFacadeGridTiles(job) {
+  const tileRecords = [];
+  const N = job.gridMode; // 2, 3 or 4
 
-  if (!paiApiUrl || !paiApiToken) {
-    return generateDemoPaiTileResult();
+  const srcPath  = job.roiSourcePath  || job.sourceImagePath;
+  const srcW     = job.roiImageWidth  || job.imageWidth;
+  const srcH     = job.roiImageHeight || job.imageHeight;
+  const cropOffX = job.cropOffsetX    || 0;
+  const cropOffY = job.cropOffsetY    || 0;
+
+  // --- 构建分割边界（像素）---
+  // 支持自定义分割线（fractions 0..1）；否则均匀分割
+  function buildBounds(total, customFracs) {
+    const valid = Array.isArray(customFracs) && customFracs.length === N - 1;
+    const fracs = valid
+      ? [0, ...customFracs.map(f => Math.max(0.01, Math.min(0.99, f))), 1]
+      : Array.from({ length: N + 1 }, (_, i) => i / N);
+    // 排序保证递增
+    fracs.sort((a, b) => a - b);
+    return fracs.map(f => Math.round(f * total));
   }
 
-  const imageBuffer = fs.readFileSync(tilePath);
-  const base64Image = imageBuffer.toString('base64');
+  const colBounds = buildBounds(srcW, job.customVDividers); // [x0, x1, ..., xN]
+  const rowBounds = buildBounds(srcH, job.customHDividers);
 
-  const response = await fetch(paiApiUrl, {
-    method: 'POST',
-    headers: { Authorization: paiApiToken, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ image: base64Image })
-  });
+  for (let row = 0; row < N; row++) {
+    for (let col = 0; col < N; col++) {
+      const bx0 = colBounds[col];
+      const bx1 = colBounds[col + 1];
+      const by0 = rowBounds[row];
+      const by1 = rowBounds[row + 1];
 
-  if (!response.ok) throw new Error(`PAI API error: ${response.status}`);
-  return await response.json();
+      const cellW = bx1 - bx0;
+      const cellH = by1 - by0;
+      // 每格向外扩 10% 覆盖切缝处病害
+      const overlapPx = Math.round(Math.min(cellW, cellH) * 0.10);
+
+      const x = Math.max(0, bx0 - overlapPx);
+      const y = Math.max(0, by0 - overlapPx);
+      const cropWidth  = Math.min(srcW, bx1 + overlapPx) - x;
+      const cropHeight = Math.min(srcH, by1 + overlapPx) - y;
+      if (cropWidth <= 0 || cropHeight <= 0) continue;
+
+      const tileId = `${job.jobId}_r${row}_c${col}`;
+      const tileFilename = `${tileId}.jpg`;
+      const tilePath = path.join(__dirname, 'uploads/tiles', tileFilename);
+
+      await sharp(srcPath)
+        .extract({ left: x, top: y, width: cropWidth, height: cropHeight })
+        .jpeg({ quality: 92 })
+        .toFile(tilePath);
+
+      tileRecords.push({
+        tileId, rowIndex: row, colIndex: col,
+        offsetX: x + cropOffX,
+        offsetY: y + cropOffY,
+        width: cropWidth, height: cropHeight,
+        tilePath, tileUrl: `/uploads/tiles/${tileFilename}`,
+        status: 'created'
+      });
+    }
+  }
+  const mode = job.customVDividers ? '自定义' : '均匀';
+  console.log(`[FacadeGrid] ${N}×${N} ${mode}切片完成，共 ${tileRecords.length} 块（ROI 偏移 +${cropOffX},+${cropOffY}）`);
+  return tileRecords;
 }
 
-function generateDemoPaiTileResult() {
-  return {
-    detections: [
-      { class: '裂缝', confidence: 0.91, bbox: [120, 160, 240, 36], polygon: [[120,160],[360,166],[358,196],[122,190]] },
-      { class: '泛碱', confidence: 0.87, bbox: [520, 300, 180, 130], polygon: [[520,300],[700,310],[690,430],[530,420]] }
-    ]
+// --- 切片推理（与单图检测使用完全相同的 run_inference.py + MODEL_CLASS_MAP 映射逻辑） ---
+async function callPaiForTile(tilePath, conf = 0.30, iou = 0.45) {
+  const defaultModel = resolveModelPath();
+  if (!defaultModel) {
+    throw new Error('未找到可用模型文件，无法执行立面切片推理');
+  }
+
+  // 与 parseLocalModelResponse 保持一致的类名映射表
+  const MODEL_CLASS_MAP = {
+    '01:LF':   '裂缝',
+    '02:QS':   '缺损',
+    '03:P':    '植物附着',
+    '04:B-FH': '风化',
+    '05:B-FJ': '泛碱',
+    0: '裂缝', 1: '缺损', 2: '植物附着', 3: '风化', 4: '泛碱'
   };
+
+  // 与单图检测保持一致：ONNX 模型固定 640×640 输入，PT 模型支持更大尺寸
+  const modelExt = path.extname(defaultModel.file).toLowerCase();
+  const inferImgsz = modelExt === '.onnx' ? '640' : '1280';
+
+  const inferScript = path.join(__dirname, 'run_inference.py');
+  const confStr = String(Math.max(0.05, Math.min(0.95, conf)));
+  const iouStr  = String(Math.max(0.10, Math.min(0.90, iou)));
+  console.log(`[FacadeTile] 推理 ${path.basename(tilePath)}  模型=${defaultModel.file}  imgsz=${inferImgsz}  conf=${confStr}  iou=${iouStr}`);
+  let stdout;
+  try {
+    const res = await execFileAsync(
+      'python3',
+      [inferScript, tilePath, confStr, iouStr, inferImgsz, defaultModel.path],
+      { timeout: 120000, maxBuffer: 1024 * 1024 * 10 }
+    );
+    stdout = res.stdout;
+  } catch (err) {
+    console.error(`[FacadeTile] ❌ 推理子进程异常 (${path.basename(tilePath)})`);
+    console.error('  message:', err.message);
+    if (err.stderr) console.error('  stderr:', String(err.stderr).slice(0, 1200));
+    if (err.stdout) console.error('  stdout:', String(err.stdout).slice(0, 400));
+    throw new Error(`切片推理子进程失败: ${err.message}`);
+  }
+
+  let localResult;
+  try {
+    localResult = JSON.parse(stdout.trim());
+  } catch (e) {
+    throw new Error(`切片推理结果 JSON 解析失败: ${stdout.slice(0, 200)}`);
+  }
+  if (!localResult.success) {
+    throw new Error(localResult.message || '切片推理返回失败状态');
+  }
+
+  // 构建与 parseLocalModelResponse 相同的 model_names 动态映射
+  const modelNames = localResult.model_names || {};
+  const diseaseMapping = {};
+  for (const [id, name] of Object.entries(modelNames)) {
+    const displayName = MODEL_CLASS_MAP[name] || MODEL_CLASS_MAP[parseInt(id)] || null;
+    if (displayName) {
+      diseaseMapping[id]   = displayName;
+      diseaseMapping[name] = displayName;
+    }
+  }
+
+  const rawDetections = localResult.detections || [];
+  const VALID_CLASSES = new Set(['风化', '泛碱', '裂缝', '植物附着', '缺损']);
+
+  const detections = rawDetections.map(det => {
+    const rawClass = det.class_name ?? det.class_id;
+    const className =
+      diseaseMapping[rawClass]          ||
+      diseaseMapping[String(det.class_id)] ||
+      MODEL_CLASS_MAP[rawClass]         ||
+      MODEL_CLASS_MAP[parseInt(rawClass)] ||
+      String(rawClass);
+
+    const bbox    = det.bbox || [0, 0, 0, 0];
+    const polygon = det.polygon || det.mask_polygon || null;
+
+    return { class: className, rawClass: String(rawClass), confidence: det.confidence || 0, bbox, polygon };
+  }).filter(d => VALID_CLASSES.has(d.class));
+
+  // 捕获 Python 生成的标注图路径（与单图检测保持一致）
+  let annotatedTilePath = null;
+  let annotatedTileUrl  = null;
+  if (localResult.annotated_image_path) {
+    const annotatedFilename = path.basename(localResult.annotated_image_path);
+    annotatedTilePath = localResult.annotated_image_path;
+    annotatedTileUrl  = `/uploads/tiles/${annotatedFilename}`;
+  }
+
+  console.log(`[FacadeTile] ✅ ${path.basename(tilePath)} 模型=${defaultModel.file}  原始=${rawDetections.length} → 有效=${detections.length}`);
+  return { detections, annotatedTilePath, annotatedTileUrl };
+}
+
+// --- 将所有标注切片拼合成一张完整的标注大图 ---
+async function stitchAnnotatedTiles(job, tiles) {
+  const W = job.roiImageWidth  || job.imageWidth;
+  const H = job.roiImageHeight || job.imageHeight;
+  const offX = job.cropOffsetX || 0;
+  const offY = job.cropOffsetY || 0;
+
+  const composites = tiles
+    .filter(t => t.annotatedTilePath && fs.existsSync(t.annotatedTilePath))
+    .map(t => ({
+      input: t.annotatedTilePath,
+      left: Math.max(0, Math.round(t.offsetX - offX)),
+      top:  Math.max(0, Math.round(t.offsetY - offY))
+    }));
+
+  if (composites.length === 0) return null;
+
+  const stitchedFilename = `${job.jobId}_stitched.jpg`;
+  const stitchedPath = path.join(__dirname, 'uploads/tiles', stitchedFilename);
+
+  await sharp({ create: { width: W, height: H, channels: 3, background: { r: 30, g: 30, b: 30 } } })
+    .composite(composites)
+    .jpeg({ quality: 88 })
+    .toFile(stitchedPath);
+
+  console.log(`[FacadeStitch] 拼合完成 ${W}×${H}px → ${stitchedFilename}`);
+  return { url: `/uploads/tiles/${stitchedFilename}`, width: W, height: H };
 }
 
 // --- 病害类别归一化 ---
@@ -1364,11 +1527,73 @@ app.post('/api/facade/analyze/:jobId', async (req, res) => {
     const job = loadFacadeJob(req.params.jobId);
     if (!job) return res.status(404).json({ success: false, message: '立面任务不存在' });
 
+    const requestedTileSize = Number(req.body?.tileSize);
+    const requestedOverlapRatio = Number(req.body?.overlapRatio);
+    const requestedGridMode = Number(req.body?.gridMode);
+    if (Number.isFinite(requestedTileSize) && requestedTileSize >= 640) {
+      job.tileSize = requestedTileSize;
+    }
+    if (Number.isFinite(requestedOverlapRatio) && requestedOverlapRatio >= 0 && requestedOverlapRatio < 0.5) {
+      job.overlapRatio = requestedOverlapRatio;
+    }
+    if ([2, 3, 4].includes(requestedGridMode)) {
+      job.gridMode = requestedGridMode;
+    }
+
+    // ── 置信度 & IoU 阈值（与单图检测相同的合理范围限制）──
+    const _rc = parseFloat(req.body?.modelConf);
+    const _ri = parseFloat(req.body?.iouThreshold);
+    job.modelConf     = Number.isFinite(_rc) ? Math.max(0.05, Math.min(0.95, _rc)) : (job.modelConf     ?? 0.30);
+    job.iouThreshold  = Number.isFinite(_ri) ? Math.max(0.10, Math.min(0.90, _ri)) : (job.iouThreshold  ?? 0.45);
+
+    // ── 自定义分割线（用户拖拽调整的切片位置，0..1 分数数组）──
+    const rawV = req.body?.customVDividers;
+    const rawH = req.body?.customHDividers;
+    const expectedLen = (job.gridMode || 3) - 1;
+    if (Array.isArray(rawV) && rawV.length === expectedLen) {
+      job.customVDividers = rawV.map(Number).filter(n => n > 0 && n < 1);
+    }
+    if (Array.isArray(rawH) && rawH.length === expectedLen) {
+      job.customHDividers = rawH.map(Number).filter(n => n > 0 && n < 1);
+    }
+
+    // ── ROI 裁剪：如果前端传入了选区坐标，先将图像裁剪到 ROI ──
+    const cropX = Number(req.body?.cropX);
+    const cropY = Number(req.body?.cropY);
+    const cropW = Number(req.body?.cropWidth);
+    const cropH = Number(req.body?.cropHeight);
+
+    if (Number.isFinite(cropX) && Number.isFinite(cropY) &&
+        Number.isFinite(cropW) && cropW > 64 &&
+        Number.isFinite(cropH) && cropH > 64) {
+      const rx = Math.max(0, Math.round(cropX));
+      const ry = Math.max(0, Math.round(cropY));
+      const rw = Math.min(job.imageWidth  - rx, Math.round(cropW));
+      const rh = Math.min(job.imageHeight - ry, Math.round(cropH));
+      if (rw > 64 && rh > 64) {
+        const roiPath = path.join(__dirname, 'uploads/tiles', `${job.jobId}_roi.jpg`);
+        await sharp(job.sourceImagePath)
+          .extract({ left: rx, top: ry, width: rw, height: rh })
+          .jpeg({ quality: 95 })
+          .toFile(roiPath);
+        // 记录 ROI 参数：切片时使用裁剪图，偏移量加入 tile offsetX/Y
+        job.roiSourcePath  = roiPath;
+        job.cropOffsetX    = rx;
+        job.cropOffsetY    = ry;
+        job.roiImageWidth  = rw;
+        job.roiImageHeight = rh;
+        console.log(`[FacadeROI] 已裁剪选区 (${rx},${ry}) ${rw}×${rh}px → ${roiPath}`);
+      }
+    }
+
     job.status = 'tiling';
     job.progress = 5;
     saveFacadeJob(job);
 
-    const tiles = await createFacadeTiles(job);
+    // 优先使用用户选择的 N×N 网格模式，否则回退到滑动窗口切片
+    const tiles = job.gridMode
+      ? await createFacadeGridTiles(job)
+      : await createFacadeTiles(job);
     job.tiles = tiles;
     job.status = 'detecting';
     job.progress = 20;
@@ -1377,22 +1602,73 @@ app.post('/api/facade/analyze/:jobId', async (req, res) => {
     const detections = [];
     let detectionId = 1;
 
+    let failedTiles = 0;
+    const analysisStart = Date.now();
     for (let i = 0; i < tiles.length; i++) {
       const tile = tiles[i];
-      const paiResult = await callPaiForTile(tile.tilePath);
-      const rawDetections = paiResult.detections || paiResult.results || [];
+      // 前置检查：切片文件是否真实存在
+      if (!fs.existsSync(tile.tilePath)) {
+        failedTiles += 1;
+        tile.status = 'failed';
+        tile.errorMsg = `切片文件不存在: ${tile.tilePath}`;
+        console.error(`[Facade] ❌ 切片 ${tile.tileId} 文件缺失，已跳过`);
+        job.progress = Math.round(20 + ((i + 1) / tiles.length) * 60);
+        saveFacadeJob(job);
+        continue;
+      }
+      try {
+        const tileStart = Date.now();
+        const paiResult = await callPaiForTile(tile.tilePath, job.modelConf, job.iouThreshold);
+        const rawDetections = paiResult.detections || [];
 
-      rawDetections.forEach(raw => {
-        const globalDetection = mapTileDetectionToGlobal({ ...raw, id: detectionId }, tile, job);
-        if (['风化', '泛碱', '裂缝', '植物附着', '缺损'].includes(globalDetection.class)) {
-          detections.push(globalDetection);
-          detectionId += 1;
+        let tileDetectionCount = 0;
+        rawDetections.forEach(raw => {
+          const globalDetection = mapTileDetectionToGlobal({ ...raw, id: detectionId }, tile, job);
+          if (['风化', '泛碱', '裂缝', '植物附着', '缺损'].includes(globalDetection.class)) {
+            detections.push(globalDetection);
+            detectionId += 1;
+            tileDetectionCount += 1;
+          }
+        });
+
+        tile.annotatedTilePath = paiResult.annotatedTilePath || null;
+        tile.annotatedTileUrl  = paiResult.annotatedTileUrl  || null;
+        tile.detectionCount    = tileDetectionCount;
+        tile.status = 'detected';
+        if (DEBUG_MODE) {
+          console.log(`[Facade] ✅ [${i+1}/${tiles.length}] ${tile.tileId} 检出 ${tileDetectionCount} 处，耗时 ${Date.now()-tileStart}ms`);
         }
-      });
+      } catch (tileErr) {
+        failedTiles += 1;
+        tile.status = 'failed';
+        tile.errorMsg = tileErr.message || String(tileErr);
+        console.error(`[Facade] ❌ [${i+1}/${tiles.length}] 切片 ${tile.tileId} 推理失败（跳过）`);
+        console.error(`          错误: ${tileErr.message}`);
+        if (DEBUG_MODE) {
+          console.error(`          堆栈: ${tileErr.stack || '(无堆栈信息)'}`);
+        }
+      }
 
-      tile.status = 'detected';
       job.progress = Math.round(20 + ((i + 1) / tiles.length) * 60);
       saveFacadeJob(job);
+    }
+
+    const analysisMs = Date.now() - analysisStart;
+    const succeeded = tiles.length - failedTiles;
+    if (failedTiles > 0) {
+      console.warn(`[Facade] ⚠️  共 ${failedTiles}/${tiles.length} 块切片推理失败，${succeeded} 块成功，总耗时 ${(analysisMs/1000).toFixed(1)}s`);
+    } else {
+      console.log(`[Facade] ✅ 所有 ${tiles.length} 块切片推理完成，共检出 ${detections.length} 处，总耗时 ${(analysisMs/1000).toFixed(1)}s`);
+    }
+
+    // 拼合所有标注切片 → 生成整墙标注大图
+    job.status = 'stitching';
+    saveFacadeJob(job);
+    let stitchResult = null;
+    try {
+      stitchResult = await stitchAnnotatedTiles(job, tiles);
+    } catch (se) {
+      console.error('[Facade] 切片拼合失败（非致命）:', se.message);
     }
 
     const grids = buildFacadeGrid(job, detections);
@@ -1405,12 +1681,26 @@ app.post('/api/facade/analyze/:jobId', async (req, res) => {
     job.summary = summary;
     saveFacadeJob(job);
 
+    const cropOffX = job.cropOffsetX || 0;
+    const cropOffY = job.cropOffsetY || 0;
+    const stitchedW = job.roiImageWidth  || job.imageWidth;
+    const stitchedH = job.roiImageHeight || job.imageHeight;
+
     // 对外只暴露 URL，不暴露服务器绝对路径
-    const publicTiles = tiles.map(t => ({
-      tileId: t.tileId, rowIndex: t.rowIndex, colIndex: t.colIndex,
+    const publicTiles = tiles.map((t, idx) => ({
+      tileId: t.tileId, index: idx + 1,
+      rowIndex: t.rowIndex, colIndex: t.colIndex,
       offsetX: t.offsetX, offsetY: t.offsetY,
+      // 在拼合图中的坐标（去掉 ROI 偏移）
+      stitchedOffsetX: Math.max(0, t.offsetX - cropOffX),
+      stitchedOffsetY: Math.max(0, t.offsetY - cropOffY),
       width: t.width, height: t.height,
-      tileUrl: t.tileUrl, status: t.status
+      tileUrl: t.tileUrl,
+      annotatedTileUrl: t.annotatedTileUrl || null,
+      detectionCount: t.detectionCount || 0,
+      status: t.status,
+      // 调试模式下暴露错误原因，方便前端提示
+      errorMsg: (DEBUG_MODE && t.errorMsg) ? t.errorMsg : undefined
     }));
 
     res.json({
@@ -1418,7 +1708,11 @@ app.post('/api/facade/analyze/:jobId', async (req, res) => {
       sourceImageUrl: job.sourceImageUrl,
       imageWidth: job.imageWidth, imageHeight: job.imageHeight,
       wallWidthM: job.wallWidthM, wallHeightM: job.wallHeightM, gridSizeM: job.gridSizeM,
-      totalTiles: tiles.length, totalDetections: detections.length,
+      totalTiles: tiles.length, failedTiles, totalDetections: detections.length,
+      // 拼合标注大图
+      stitchedImageUrl: stitchResult?.url  || null,
+      stitchedWidth:    stitchResult ? stitchedW : null,
+      stitchedHeight:   stitchResult ? stitchedH : null,
       grids, detections, summary,
       tiles: publicTiles
     });
@@ -1691,10 +1985,11 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`📂  服务目录: ${runtimeBase}`);
   console.log('───────────────────────────────────────────────────────');
   console.log('📦  目标检测模型 (YOLOv11):');
-  if (process.env.PAI_API_URL) {
-    console.log(`    ✅ PAI EAS: ${process.env.PAI_API_URL}`);
+  const startupModel = resolveModelPath();
+  if (startupModel) {
+    console.log(`    ✅ 本地模型: ${startupModel.file} (${(startupModel.size / 1024 / 1024).toFixed(1)} MB)`);
   } else {
-    console.log('    ⚠️  未配置，使用演示模式');
+    console.log('    ❌  models/ 目录下未找到 .onnx / .pt 模型文件，推理将报错');
   }
   console.log('───────────────────────────────────────────────────────');
   console.log('🤖  AI 大模型服务:');

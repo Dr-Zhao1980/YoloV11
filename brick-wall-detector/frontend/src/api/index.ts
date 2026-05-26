@@ -276,6 +276,9 @@ export interface FacadeUploadPayload {
   wallWidthM: number
   wallHeightM: number
   gridSizeM: number
+  tileSize?: number
+  overlapRatio?: number
+  gridMode?: number
 }
 
 export interface FacadeGrid {
@@ -346,6 +349,9 @@ export async function uploadFacadePanorama(
   formData.append('wallWidthM', String(payload.wallWidthM))
   formData.append('wallHeightM', String(payload.wallHeightM))
   formData.append('gridSizeM', String(payload.gridSizeM || 1))
+  formData.append('tileSize', String(payload.tileSize || 1280))
+  formData.append('overlapRatio', String(payload.overlapRatio ?? 0.15))
+  if (payload.gridMode) formData.append('gridMode', String(payload.gridMode))
 
   return api.post('/facade/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
@@ -356,8 +362,38 @@ export async function uploadFacadePanorama(
 /**
  * 启动立面普查分析
  */
-export async function analyzeFacade(jobId: string): Promise<FacadeResult> {
-  return api.post(`/facade/analyze/${jobId}`, {}, { timeout: 300000 })
+export async function analyzeFacade(
+  jobId: string,
+  options: {
+    tileSize?: number
+    overlapRatio?: number
+    gridMode?: number
+    modelConf?: number
+    iouThreshold?: number
+    customVDividers?: number[]
+    customHDividers?: number[]
+    cropX?: number
+    cropY?: number
+    cropWidth?: number
+    cropHeight?: number
+  } = {}
+): Promise<FacadeResult> {
+  const body: Record<string, any> = {
+    tileSize:     options.tileSize     || 640,
+    overlapRatio: options.overlapRatio ?? 0.10,
+    modelConf:    options.modelConf    ?? 0.30,
+    iouThreshold: options.iouThreshold ?? 0.45
+  }
+  if (options.gridMode)   body.gridMode   = options.gridMode
+  if (Array.isArray(options.customVDividers) && options.customVDividers.length > 0)
+    body.customVDividers = options.customVDividers
+  if (Array.isArray(options.customHDividers) && options.customHDividers.length > 0)
+    body.customHDividers = options.customHDividers
+  if (options.cropX      != null) body.cropX      = options.cropX
+  if (options.cropY      != null) body.cropY      = options.cropY
+  if (options.cropWidth  != null) body.cropWidth  = options.cropWidth
+  if (options.cropHeight != null) body.cropHeight = options.cropHeight
+  return api.post(`/facade/analyze/${jobId}`, body, { timeout: 300000 })
 }
 
 /**

@@ -11,7 +11,8 @@ const tokens = new Map();
 // 用户数据文件路径
 let dataDir;
 
-export function initAuth(app, __dirname) {
+export function initAuth(app, __dirname, opts = {}) {
+  const resolveModelPath = opts.resolveModelPath || null;
   dataDir = path.join(__dirname, 'data');
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
@@ -462,14 +463,14 @@ export function initAuth(app, __dirname) {
   });
 
   app.get('/api/system/status', authMiddleware, (req, res) => {
-    // 检测 Python 模型服务是否可用
-    const modelConnected = fs.existsSync(path.join(dataDir, 'model_ready.flag'));
+    // 直接检测模型文件是否可用（resolveModelPath 由 server.js 注入）
+    const modelAvailable = resolveModelPath ? !!resolveModelPath() : false;
     res.json({
       code: 200,
       message: '查询成功',
       data: {
         serverStatus: 'running',
-        modelStatus: modelConnected ? 'connected' : 'disconnected',
+        modelStatus: modelAvailable ? 'connected' : 'disconnected',
         databaseStatus: 'connected',
         lastUpdateTime: new Date().toISOString().replace('T', ' ').slice(0, 19)
       }
