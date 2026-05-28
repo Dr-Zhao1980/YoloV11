@@ -108,9 +108,7 @@
           <div class="dd-top" :style="{ borderLeftColor: d.color }">
             <span class="dd-idx" :style="{ background: d.color }">{{ Number(idx) + 1 }}</span>
             <span class="dd-name">{{ d.name }}</span>
-            <el-tag :type="d.detected ? sevType(d.maxSeverity) : 'info'" size="small" effect="dark" round>
-              {{ d.detected ? d.maxSeverity : '未检出' }}
-            </el-tag>
+            <el-tag v-if="!d.detected" type="info" size="small" effect="dark" round>未检出</el-tag>
             <span v-if="d.detected" class="dd-stat">
               {{ d.count }} 处<template v-if="d.totalArea">&ensp;·&ensp;{{ d.totalArea.toFixed(2) }} m²</template>
             </span>
@@ -119,10 +117,6 @@
             <div class="dd-field">
               <span class="dd-fl">病害描述</span>
               <span class="dd-fv">{{ d.description }}</span>
-            </div>
-            <div class="dd-field">
-              <span class="dd-fl">严重程度</span>
-              <span class="dd-fv">{{ d.severity }}</span>
             </div>
             <div class="dd-field">
               <span class="dd-fl">修缮方法</span>
@@ -173,11 +167,6 @@
           <el-table :data="report.gridAnalysis" stripe size="small" style="width: 100%">
             <el-table-column prop="gridId" label="网格编号" width="100" />
             <el-table-column prop="total" label="病害数" width="80" />
-            <el-table-column prop="severity" label="最高严重度" width="100">
-              <template #default="{ row }">
-                <el-tag :type="sevType(row.severity)" size="small" effect="dark" round>{{ row.severity }}</el-tag>
-              </template>
-            </el-table-column>
             <el-table-column label="病害类型">
               <template #default="{ row }">
                 <span v-for="(count, disease) in row.diseases" :key="String(disease)" class="grid-disease-tag">
@@ -219,7 +208,6 @@ const allRepairItems = computed(() => {
   ]
 })
 
-function sevType(s: string) { return s === '重度' ? 'danger' : s === '中度' ? 'warning' : 'success' }
 function fmtDate(iso: string) { return iso ? new Date(iso).toLocaleString('zh-CN') : '-' }
 function printReport() { window.print() }
 function formatCost(cost: number) { return cost >= 10000 ? (cost / 10000).toFixed(1) + '万' : cost.toLocaleString() }
@@ -330,7 +318,7 @@ function exportMarkdown() {
   lines.push('## 02 五类病害详情与修缮方案')
   lines.push('')
   r.diseaseDetails.forEach((d: any, i: number) => {
-    lines.push(`### ${i + 1}. ${d.name}${d.detected ? ` （${d.maxSeverity}）` : ' （未检出）'}`)
+    lines.push(`### ${i + 1}. ${d.name}${d.detected ? '' : ' （未检出）'}`)
     lines.push('')
     if (d.detected) {
       const stat = d.totalArea ? `${d.count} 处，面积约 ${d.totalArea.toFixed(2)} m²` : `${d.count} 处`
@@ -338,8 +326,6 @@ function exportMarkdown() {
       lines.push('')
     }
     lines.push(`**病害描述：** ${d.description}`)
-    lines.push('')
-    lines.push(`**严重程度：** ${d.severity}`)
     lines.push('')
     lines.push('**修缮方法：**')
     lines.push('')
@@ -382,7 +368,7 @@ function exportWord() {
 
   const diseaseHtml = (r.diseaseDetails || []).map((d: any, i: number) => {
     const statText = d.detected 
-      ? esc(d.maxSeverity) + (d.totalArea ? `（${d.count} 处，${d.totalArea.toFixed(2)} m²）` : `（${d.count} 处）`)
+      ? (d.totalArea ? `${d.count} 处，${d.totalArea.toFixed(2)} m²` : `${d.count} 处`)
       : '未检出'
     return `
     <div style="border:1px solid #ccc; border-left:4px solid ${d.color || '#999'}; padding:12px 16px; margin-bottom:14px;">
@@ -392,7 +378,6 @@ function exportWord() {
         </span>
       </h3>
       <p><b>病害描述：</b>${esc(d.description)}</p>
-      <p><b>严重程度：</b>${esc(d.severity)}</p>
       <p><b>修缮方法：</b></p>
       <ol style="margin:4px 0 8px 24px;">
         ${(d.repairMethod || []).map((s: string) => `<li>${esc(s)}</li>`).join('')}
