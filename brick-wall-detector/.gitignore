@@ -12,10 +12,14 @@ dist/
 .env.local
 .env.*.local
 
-# 上传 / 持久化数据（仅 backend/uploads/ + 旧根 uploads/）
+# 上传 / 持久化数据
 backend/uploads/
 backend/data/facade-jobs/
 uploads/
+
+# 运行时生成的数据（历史记录、日志）
+backend/data/history.json
+backend/data/logs.json
 
 # 日志（保留 logs/ 目录但忽略所有日志文件）
 logs/*.log

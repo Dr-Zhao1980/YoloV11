@@ -35,11 +35,11 @@
 |------|------|
 | 📷 图片上传 | 支持拖拽 / 点击上传红砖墙照片，支持 JPG / PNG 格式 |
 | 🤖 AI 检测 | 调用阿里云 PAI 平台部署的 YOLOv11 目标检测模型 |
-| 🔍 五类病害识别 | 风化、泛碱、裂缝、脱落、缺损 |
+| 🔍 五类病害识别 | 风化、泛碱、裂缝、植物附着、缺损 |
 | 📐 面积计算 | 自动计算风化和泛碱的受损面积（m²） |
 | 🖼️ 可视化标注 | 在原图上叠加彩色边界框，标注病害位置与置信度 |
 | 📊 统计面板 | 实时显示病害数量、种类、面积等关键指标 |
-| 📝 修缮报告 | 一键生成完整的修缮方案报告（含优先级、材料、工法） |
+| 📝 修缮报告 | 一键生成完整的修缮方案报告（病害详情、修缮建议、材料、工法） |
 | 🤖 AI 智能分析 | 基于大模型的病害成因分析、修缮方案、预防建议 |
 | � AI 对话 | 支持就检测结果向 AI 追问 |
 | �🖨️ 导出打印 | 支持浏览器打印 / 导出 PDF |
@@ -95,13 +95,17 @@
 ## 快速启动（3步）
 
 ```bash
-# 1. 进入项目目录
-cd /home/zzn16/frontdev/YoloV11/brick-wall-detector
+# 1. Clone 并进入子目录
+git clone git@github.com:Dr-Zhao1980/YoloV11.git
+cd YoloV11/brick-wall-detector
 
-# 2. 安装依赖 + 构建前端
+# 2. 复制并配置环境变量
+cp .env.example .env   # 然后编辑 .env 填入 API 密钥
+
+# 3. 安装依赖 + 构建前端
 npm install && npm run build
 
-# 3. 启动服务
+# 4. 启动服务
 npm start
 ```
 
@@ -111,10 +115,11 @@ npm start
 
 ## 详细启动步骤
 
-### 第一步：进入项目目录
+### 第一步：克隆仓库并进入项目目录
 
 ```bash
-cd /home/zzn16/frontdev/YoloV11/brick-wall-detector
+git clone git@github.com:Dr-Zhao1980/YoloV11.git
+cd YoloV11/brick-wall-detector
 ```
 
 > ⚠️ 注意：**必须进入 `brick-wall-detector` 子目录**，不是 `YoloV11` 根目录。
@@ -269,7 +274,7 @@ npm start
 }
 ```
 
-类别映射：`0=风化, 1=泛碱, 2=裂缝, 3=脱落, 4=缺损`
+类别映射：`01:LF=裂缝, 02:QS=缺损, 03:P=植物附着, 04:B-FH=风化, 05:B-FJ=泛碱`
 
 > 系统同时兼容英文类名（weathering, efflorescence, crack, spalling, missing）和中文类名。
 
@@ -327,7 +332,7 @@ brick-wall-detector/
 | 1 | 风化 | 🔴 红色 | ✅ 有 |
 | 2 | 泛碱 | 🔵 蓝色 | ✅ 有 |
 | 3 | 裂缝 | 🟡 橙色 | — |
-| 4 | 脱落 | 🟣 紫色 | — |
+| 4 | 植物附着 | 🟣 紫色 | — |
 | 5 | 缺损 | 🟢 青色 | — |
 
 ### 3. 检测结果展示
@@ -341,7 +346,7 @@ brick-wall-detector/
 
 - **总体评估**：病害种类数、检出总数、风化/泛碱面积、综合风险等级
 - **五类病害修缮方案**：每类病害的描述、严重程度判定标准、分级修缮方法、推荐材料、预防措施
-- **修缮优先级**：紧急处理（重度）→ 重点关注（中度）→ 常规维护（轻度）
+- **修缮建议**：对检出的病害进行简明罗列，包含病害名称、数量及修缮建议
 
 ---
 
@@ -473,7 +478,7 @@ AI 对话问答。
 
 ```bash
 # 使用 nohup 后台运行
-cd /home/zzn16/frontdev/YoloV11/brick-wall-detector
+cd YoloV11/brick-wall-detector
 nohup npm start > app.log 2>&1 &
 
 # 查看日志
@@ -493,11 +498,11 @@ kill $(lsof -t -i:3080)
 
 ```bash
 # ❌ 错误
-cd /home/zzn16/frontdev/YoloV11
+cd YoloV11
 npm start
 
 # ✅ 正确
-cd /home/zzn16/frontdev/YoloV11/brick-wall-detector
+cd YoloV11/brick-wall-detector
 npm start
 ```
 
