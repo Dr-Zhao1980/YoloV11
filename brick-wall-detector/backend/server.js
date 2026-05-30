@@ -18,6 +18,8 @@ const uuidv4 = () => randomUUID();
 
 dotenv.config();
 
+const PYTHON_BIN = process.env.PYTHON_BIN || 'python3';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 // 项目根目录：兼容 server.js 在根目录或 backend/ 子目录两种部署形态
@@ -239,7 +241,7 @@ async function runDetectTask({ filePath, filename, imagePath, brickLengthMm, sel
   try {
     const inferScript = path.join(__dirname, 'run_inference.py');
     const { stdout } = await execFileAsync(
-      'python3',
+      PYTHON_BIN,
       [inferScript, filePath, String(modelConf), String(iouThreshold), String(inferImgsz), selectedModel.path],
       { timeout: 90000, maxBuffer: 1024 * 1024 * 10 }
     );
@@ -1185,8 +1187,15 @@ function createFacadeJobRecord(params) {
     tileSize: params.tileSize || 1280,
     overlapRatio: params.overlapRatio || 0.15,
     gridMode: params.gridMode || null,
+    sliceMode: params.sliceMode || 'manual',
+    scalePxPerMm: params.scalePxPerMm || null,
+    zoneSizeMm: params.zoneSizeMm || null,
+    overlapMm: params.overlapMm != null ? params.overlapMm : null,
+    brickLengthMm: params.brickLengthMm || null,
+    brickWidthMm: params.brickWidthMm || null,
     status: 'uploaded',
     progress: 0,
+    cancelled: false,
     tiles: [],
     detections: [],
     grids: [],
@@ -1302,6 +1311,64 @@ async function createFacadeGridTiles(job) {
   return tileRecords;
 }
 
+// --- 智能比例尺切片（C+2D 为切片边长，C 为步长，D 为单侧重叠）---
+async function createAutoScaleTiles(job) {
+  const scale   = job.scalePxPerMm;   // px/mm
+  const C_mm    = job.zoneSizeMm;     // 区域边长（mm）
+  const D_mm    = job.overlapMm;      // 单侧重叠（mm）
+
+  if (!scale || scale <= 0 || !C_mm || C_mm <= 0 || D_mm == null || D_mm < 0) {
+    throw new Error('自动切片参数无效：scalePxPerMm / zoneSizeMm / overlapMm 必须合法');
+  }
+
+  const tileSizePx = Math.round((C_mm + 2 * D_mm) * scale);
+  const stepPx     = Math.round(C_mm * scale);
+
+  if (tileSizePx < 64 || stepPx < 16) {
+    throw new Error(`自动切片过小 tile=${tileSizePx}px step=${stepPx}px，请增大 C 或检查比例尺`);
+  }
+
+  const srcPath  = job.roiSourcePath  || job.sourceImagePath;
+  const srcW     = job.roiImageWidth  || job.imageWidth;
+  const srcH     = job.roiImageHeight || job.imageHeight;
+  const cropOffX = job.cropOffsetX    || 0;
+  const cropOffY = job.cropOffsetY    || 0;
+
+  const tileRecords = [];
+  let rowIndex = 0;
+
+  for (let y = 0; y < srcH; y += stepPx) {
+    let colIndex = 0;
+    for (let x = 0; x < srcW; x += stepPx) {
+      const cropW = Math.min(tileSizePx, srcW - x);
+      const cropH = Math.min(tileSizePx, srcH - y);
+      // 跳过过小边缘片（小于步长 30%）
+      if (cropW < stepPx * 0.30 || cropH < stepPx * 0.30) { colIndex++; continue; }
+
+      const tileId       = `${job.jobId}_r${rowIndex}_c${colIndex}`;
+      const tileFilename = `${tileId}.jpg`;
+      const tilePath     = path.join(__dirname, 'uploads/tiles', tileFilename);
+
+      await sharp(srcPath)
+        .extract({ left: x, top: y, width: cropW, height: cropH })
+        .jpeg({ quality: 92 })
+        .toFile(tilePath);
+
+      tileRecords.push({
+        tileId, rowIndex, colIndex,
+        offsetX: x + cropOffX, offsetY: y + cropOffY,
+        width: cropW, height: cropH,
+        tilePath, tileUrl: `/uploads/tiles/${tileFilename}`,
+        status: 'created'
+      });
+      colIndex++;
+    }
+    rowIndex++;
+  }
+  console.log(`[FacadeAuto] 智能切片完成: tile=${tileSizePx}px step=${stepPx}px 共 ${tileRecords.length} 块 (ROI +${cropOffX},+${cropOffY})`);
+  return tileRecords;
+}
+
 // --- 切片推理（与单图检测使用完全相同的 run_inference.py + MODEL_CLASS_MAP 映射逻辑） ---
 async function callPaiForTile(tilePath, conf = 0.30, iou = 0.45) {
   const defaultModel = resolveModelPath();
@@ -1330,7 +1397,7 @@ async function callPaiForTile(tilePath, conf = 0.30, iou = 0.45) {
   let stdout;
   try {
     const res = await execFileAsync(
-      'python3',
+      PYTHON_BIN,
       [inferScript, tilePath, confStr, iouStr, inferImgsz, defaultModel.path],
       { timeout: 120000, maxBuffer: 1024 * 1024 * 10 }
     );
@@ -1613,6 +1680,115 @@ function buildFacadeSummary(grids, detections) {
   return summary;
 }
 
+// --- 砖缝比例尺标定接口（FFT 图像分析，估算 px/mm）---
+app.post('/api/facade/calibrate-scale/:jobId', async (req, res) => {
+  try {
+    const job = loadFacadeJob(req.params.jobId);
+    if (!job) return res.status(404).json({ success: false, message: '立面任务不存在' });
+
+    const brickA = parseFloat(req.body?.brickLengthMm);
+    const brickB = parseFloat(req.body?.brickWidthMm);
+    if (!Number.isFinite(brickA) || brickA <= 0 || !Number.isFinite(brickB) || brickB <= 0) {
+      return res.status(400).json({ success: false, message: 'brickLengthMm（A）和 brickWidthMm（B）必须为正数' });
+    }
+
+    const wallScale = job.imageWidth / (job.wallWidthM * 1000);  // px/mm（墙体尺寸基准）
+    const brickScript = path.join(__dirname, 'brick_scale.py');
+    const annotatedFilename = `${job.jobId}_brick_calib.jpg`;
+    const annotatedPath = path.join(__dirname, 'uploads/tiles', annotatedFilename);
+    job.status = 'calibrating';
+    job.progress = 8;
+    saveFacadeJob(job);
+
+    let pyResult;
+    try {
+      const { stdout } = await execFileAsync(
+        PYTHON_BIN,
+        [brickScript, job.sourceImagePath, String(brickA), String(brickB), annotatedPath],
+        { timeout: 60000, maxBuffer: 1024 * 1024 * 4 }
+      );
+      pyResult = JSON.parse(stdout.trim());
+    } catch (pyErr) {
+      console.error('[BrickScale] Python 标定脚本失败:', pyErr.message);
+      return res.json({
+        success: false,
+        message: `砖缝特征提取失败（${pyErr.message}），建议直接使用墙体尺寸比例尺`,
+        wallBasedScale: wallScale
+      });
+    }
+
+    if (!pyResult.success) {
+      return res.json({ ...pyResult, wallBasedScale: wallScale });
+    }
+
+    const discrepancy = Math.abs(pyResult.scale_px_per_mm - wallScale) / (wallScale + 1e-9);
+    console.log(`[BrickScale] 砖缝标定: ${pyResult.scale_px_per_mm.toFixed(4)} px/mm | 墙体基准: ${wallScale.toFixed(4)} px/mm | 偏差: ${(discrepancy*100).toFixed(1)}%`);
+
+    res.json({
+      success: true,
+      scalePxPerMm: pyResult.scale_px_per_mm,
+      wallBasedScale: wallScale,
+      discrepancyPct: Math.round(discrepancy * 100),
+      method: pyResult.method,
+      hPeriodPx: pyResult.h_period_px,
+      vPeriodPx: pyResult.v_period_px,
+      annotatedImageUrl: `/uploads/tiles/${annotatedFilename}`,
+      detail: pyResult.detail || ''
+    });
+  } catch (error) {
+    console.error('Calibrate scale error:', error);
+    res.status(500).json({ success: false, message: '比例尺标定失败: ' + error.message });
+  }
+});
+
+// --- 手动框选砖块比例尺标定接口 ---
+app.post('/api/facade/manual-scale/:jobId', async (req, res) => {
+  try {
+    const job = loadFacadeJob(req.params.jobId);
+    if (!job) return res.status(404).json({ success: false, message: '立面任务不存在' });
+
+    const { longBrickPx, shortBrickPx, brickLengthMm, brickWidthMm } = req.body;
+
+    if (!Number.isFinite(longBrickPx) || longBrickPx <= 0 ||
+        !Number.isFinite(brickLengthMm) || brickLengthMm <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: '参数无效：长砖像素和砖块长度必须为正数'
+      });
+    }
+
+    const scaleFromLength = longBrickPx / brickLengthMm;
+    let finalScale = scaleFromLength;
+
+    if (Number.isFinite(shortBrickPx) && shortBrickPx > 0 &&
+        Number.isFinite(brickWidthMm) && brickWidthMm > 0) {
+      const scaleFromWidth = shortBrickPx / brickWidthMm;
+      finalScale = (scaleFromLength + scaleFromWidth) / 2;
+    }
+
+    const wallScale = job.imageWidth / (job.wallWidthM * 1000);
+    const discrepancy = Math.abs(finalScale - wallScale) / (wallScale + 1e-9);
+
+    console.log(`[ManualScale] 手动框选标定: ${finalScale.toFixed(4)} px/mm | 墙体基准: ${wallScale.toFixed(4)} px/mm | 偏差: ${(discrepancy*100).toFixed(1)}%`);
+
+    res.json({
+      success: true,
+      scalePxPerMm: Number(finalScale.toFixed(5)),
+      scaleFromLength: Number(scaleFromLength.toFixed(5)),
+      wallBasedScale: wallScale,
+      discrepancyPct: Math.round(discrepancy * 100),
+      method: 'manual-brick-selection',
+      longBrickPx,
+      shortBrickPx: shortBrickPx || 0,
+      brickLengthMm,
+      brickWidthMm
+    });
+  } catch (error) {
+    console.error('Manual scale calibration error:', error);
+    res.status(500).json({ success: false, message: '手动比例尺标定失败: ' + error.message });
+  }
+});
+
 // --- 全景大图上传接口 ---
 app.post('/api/facade/upload', panoramaUpload.single('panorama'), async (req, res) => {
   try {
@@ -1665,6 +1841,7 @@ app.post('/api/facade/analyze/:jobId', async (req, res) => {
   try {
     const job = loadFacadeJob(req.params.jobId);
     if (!job) return res.status(404).json({ success: false, message: '立面任务不存在' });
+    if (job.status === 'cancelled') return res.status(409).json({ success: false, message: '该任务已被终止，无法继续分析' });
 
     const requestedTileSize    = Number(req.body?.tileSize);
     const requestedOverlapRatio = Number(req.body?.overlapRatio);
@@ -1735,7 +1912,33 @@ app.post('/api/facade/analyze/:jobId', async (req, res) => {
       j.status = 'tiling'; j.progress = 5;
       saveFacadeJob(j);
 
-      const tiles = j.gridMode ? await createFacadeGridTiles(j) : await createFacadeTiles(j);
+      // 解析自动切片参数
+      const reqSliceMode = req.body?.sliceMode;
+      if (reqSliceMode === 'auto' || reqSliceMode === 'manual') j.sliceMode = reqSliceMode;
+      const reqScale = parseFloat(req.body?.scalePxPerMm);
+      if (Number.isFinite(reqScale) && reqScale > 0) j.scalePxPerMm = reqScale;
+      const reqZone = parseFloat(req.body?.zoneSizeMm);
+      if (Number.isFinite(reqZone) && reqZone > 0) j.zoneSizeMm = reqZone;
+      const reqOverlap = parseFloat(req.body?.overlapMm);
+      if (Number.isFinite(reqOverlap) && reqOverlap >= 0) j.overlapMm = reqOverlap;
+      const reqBA = parseFloat(req.body?.brickLengthMm);
+      if (Number.isFinite(reqBA) && reqBA > 0) j.brickLengthMm = reqBA;
+      const reqBB = parseFloat(req.body?.brickWidthMm);
+      if (Number.isFinite(reqBB) && reqBB > 0) j.brickWidthMm = reqBB;
+      saveFacadeJob(j);
+
+      let tiles;
+      if (j.sliceMode === 'auto') {
+        if (j.scalePxPerMm && j.zoneSizeMm != null) {
+          tiles = await createAutoScaleTiles(j);
+        } else {
+          throw new Error('智能切片参数不完整（缺少比例尺或区域尺寸），无法执行分析');
+        }
+      } else if (j.gridMode) {
+        tiles = await createFacadeGridTiles(j);
+      } else {
+        tiles = await createFacadeTiles(j);
+      }
       j.tiles = tiles; j.status = 'detecting'; j.progress = 20;
       j.tilesTotal = tiles.length; j.tilesProcessed = 0;
       saveFacadeJob(j);
@@ -1744,6 +1947,17 @@ app.post('/api/facade/analyze/:jobId', async (req, res) => {
       const analysisStart = Date.now();
 
       for (let i = 0; i < tiles.length; i++) {
+        const currentJob = loadFacadeJob(j.jobId);
+        if (currentJob?.cancelled) {
+          j.status = 'cancelled';
+          j.queueStatus = 'cancelled';
+          j.progress = Math.min(j.progress || 0, 99);
+          j.errorMsg = '识别已被用户终止';
+          saveFacadeJob(j);
+          console.log(`[Facade] ⏹️ 任务 ${j.jobId} 已取消`);
+          return;
+        }
+
         const tile = tiles[i];
         if (!fs.existsSync(tile.tilePath)) {
           failedTiles++; tile.status = 'failed'; tile.errorMsg = `切片文件不存在: ${tile.tilePath}`;
@@ -1774,18 +1988,15 @@ app.post('/api/facade/analyze/:jobId', async (req, res) => {
 
       const analysisMs = Date.now() - analysisStart;
       const beforeNMS = detections.length;
-      // 跨切片全局 NMS：去除重叠区域的重复框
       const dedupedDetections = applyGlobalNMS(detections, j.iouThreshold);
       const removedByNMS = beforeNMS - dedupedDetections.length;
       if (removedByNMS > 0) {
         console.log(`[Facade] 🔄 全局 NMS 去重：${beforeNMS} → ${dedupedDetections.length} 处（去除 ${removedByNMS} 个跨切片重复框，IoU > ${j.iouThreshold}）`);
       }
-      // 用去重后的结果更新各切片计数
       const tileCountMap = {};
       for (const det of dedupedDetections) tileCountMap[det.tileId] = (tileCountMap[det.tileId] || 0) + 1;
       for (const tile of tiles) tile.detectionCount = tileCountMap[tile.tileId] || 0;
 
-      // 替换原始 detections 数组（后续 buildFacadeGrid 等使用去重结果）
       detections.length = 0; dedupedDetections.forEach(d => detections.push(d));
 
       if (failedTiles > 0) console.warn(`[Facade] ⚠️  共 ${failedTiles}/${tiles.length} 块失败，总耗时 ${(analysisMs/1000).toFixed(1)}s`);
@@ -1825,7 +2036,8 @@ app.post('/api/facade/analyze/:jobId', async (req, res) => {
         totalTiles: tiles.length, failedTiles, totalDetections: detections.length,
         stitchedImageUrl: stitchResult ? `${stitchResult.url}?v=${rv}` : null,
         stitchedWidth: stitchResult ? stitchedW : null, stitchedHeight: stitchResult ? stitchedH : null,
-        grids, detections, summary, tiles: publicTiles
+        grids, detections, summary, tiles: publicTiles,
+        cancelled: !!j.cancelled
       };
       saveFacadeJob(j);
     }).catch(err => {
@@ -1848,9 +2060,20 @@ app.post('/api/facade/analyze/:jobId', async (req, res) => {
 app.get('/api/facade/job/:jobId', (req, res) => {
   const job = loadFacadeJob(req.params.jobId);
   if (!job) return res.status(404).json({ success: false, message: '立面任务不存在' });
-  // 分析已完成：直接返回完整结果
   if (job.status === 'finished' && job.finalResponse) return res.json(job.finalResponse);
-  // 分析中 / 排队中：返回进度信息
+  if (job.status === 'cancelled') {
+    return res.json({
+      success: true,
+      jobId: job.jobId,
+      status: 'cancelled',
+      position: 0,
+      progress: job.progress || 0,
+      tilesProcessed: job.tilesProcessed || 0,
+      tilesTotal: job.tilesTotal || 0,
+      message: '识别已被用户终止',
+      cancelled: true
+    });
+  }
   const qs = job.queueStatus || job.status;
   const qpos = job.queuePosition || 0;
   const tilesProcessed = job.tilesProcessed || 0;
@@ -1868,6 +2091,21 @@ app.get('/api/facade/job/:jobId', (req, res) => {
            : qs === 'error'     ? `分析失败: ${job.errorMsg || '未知错误'}`
            : '等待中'
   });
+});
+
+app.post('/api/facade/cancel/:jobId', (req, res) => {
+  try {
+    const job = loadFacadeJob(req.params.jobId);
+    if (!job) return res.status(404).json({ success: false, message: '立面任务不存在' });
+    job.cancelled = true;
+    job.status = 'cancelled';
+    job.queueStatus = 'cancelled';
+    job.errorMsg = '识别已被用户终止';
+    saveFacadeJob(job);
+    res.json({ success: true, message: '已终止当前识别进程', jobId: job.jobId });
+  } catch (error) {
+    res.status(500).json({ success: false, message: '终止识别失败: ' + error.message });
+  }
 });
 
 // --- 预留"序列影像自动合成"接口 ---

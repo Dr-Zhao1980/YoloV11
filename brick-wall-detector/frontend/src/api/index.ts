@@ -191,6 +191,7 @@ export interface QueueProgress {
   message?: string
   tilesProcessed?: number
   tilesTotal?: number
+  cancelled?: boolean
 }
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
@@ -401,6 +402,12 @@ export async function analyzeFacade(
     cropY?: number
     cropWidth?: number
     cropHeight?: number
+    sliceMode?: 'manual' | 'auto'
+    scalePxPerMm?: number
+    zoneSizeMm?: number
+    overlapMm?: number
+    brickLengthMm?: number
+    brickWidthMm?: number
   } = {},
   onProgress?: (info: QueueProgress) => void
 ): Promise<FacadeResult> {
@@ -419,6 +426,12 @@ export async function analyzeFacade(
   if (options.cropY      != null) body.cropY      = options.cropY
   if (options.cropWidth  != null) body.cropWidth  = options.cropWidth
   if (options.cropHeight != null) body.cropHeight = options.cropHeight
+  if (options.sliceMode)            body.sliceMode    = options.sliceMode
+  if (options.scalePxPerMm  != null) body.scalePxPerMm  = options.scalePxPerMm
+  if (options.zoneSizeMm    != null) body.zoneSizeMm    = options.zoneSizeMm
+  if (options.overlapMm     != null) body.overlapMm     = options.overlapMm
+  if (options.brickLengthMm != null) body.brickLengthMm = options.brickLengthMm
+  if (options.brickWidthMm  != null) body.brickWidthMm  = options.brickWidthMm
 
   const initial: any = await api.post(`/facade/analyze/${jobId}`, body, { timeout: 60000 })
   const pollJobId = initial.jobId || jobId
@@ -446,6 +459,35 @@ export async function analyzeFacade(
  */
 export async function getFacadeJob(jobId: string): Promise<any> {
   return api.get(`/facade/job/${jobId}`)
+}
+
+/**
+ * 砖缝比例尺标定（FFT 图像分析）
+ */
+export async function calibrateBrickScale(
+  jobId: string,
+  brickLengthMm: number,
+  brickWidthMm: number
+): Promise<any> {
+  return api.post(`/facade/calibrate-scale/${jobId}`, { brickLengthMm, brickWidthMm })
+}
+
+/**
+ * 手动框选砖块比例尺标定
+ */
+export async function manualScaleCalibration(
+  jobId: string,
+  longBrickPx: number,
+  shortBrickPx: number,
+  brickLengthMm: number,
+  brickWidthMm: number
+): Promise<any> {
+  return api.post(`/facade/manual-scale/${jobId}`, {
+    longBrickPx,
+    shortBrickPx,
+    brickLengthMm,
+    brickWidthMm
+  })
 }
 
 /**
@@ -494,6 +536,8 @@ export default {
   getAIStatus,
   uploadFacadePanorama,
   analyzeFacade,
+  calibrateBrickScale,
+  manualScaleCalibration,
   getFacadeJob,
   getFacadeReport,
   checkImageQuality

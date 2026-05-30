@@ -5,5 +5,12 @@
     "password": "admin123",
     "nickname": "系统管理员",
     "role": "admin"
+  },
+  {
+    "id": 2,
+    "username": "0218",
+    "password": "zyr20030218",
+    "nickname": "0218",
+    "role": "user"
   }
 ]

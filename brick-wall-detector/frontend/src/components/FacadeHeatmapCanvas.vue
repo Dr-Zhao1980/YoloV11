@@ -1,5 +1,18 @@
 <template>
   <div ref="wrapRef" class="facade-canvas-wrap">
+    <div v-if="isAnalyzing" class="ai-overlay">
+      <div class="ai-card">
+        <div class="ai-title">AI 深度普查诊断中，请稍候...</div>
+        <div class="ai-subtitle">正在建立砖缝比例尺、分块识别并汇总整墙病害</div>
+        <div class="ai-progress-shell">
+          <div class="ai-progress-track">
+            <div class="ai-progress-glow"></div>
+            <div class="ai-progress-fill" :style="{ width: `${progressPct}%` }"></div>
+          </div>
+          <div class="ai-progress-text">{{ progressLabel }}</div>
+        </div>
+      </div>
+    </div>
     <canvas
       ref="canvasRef"
       class="facade-canvas"
@@ -50,6 +63,9 @@ const props = defineProps<{
   wallHeightM: number
   grids: FacadeGrid[]
   detections?: FacadeDetection[]
+  isAnalyzing?: boolean
+  progress?: number
+  progressText?: string
 }>()
 
 const emit = defineEmits<{
@@ -61,6 +77,8 @@ const wrapRef = ref<HTMLDivElement | null>(null)
 const imageObj = ref<HTMLImageElement | null>(null)
 const hoverGrid = ref<FacadeGrid | null>(null)
 const containerWidth = ref(0)
+const progressPct = computed(() => Math.max(0, Math.min(100, props.progress ?? 0)))
+const progressLabel = computed(() => props.progressText || '正在执行 AI 诊断')
 
 const displayScale = computed(() => {
   const w = containerWidth.value || 980
@@ -299,6 +317,86 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 
+.ai-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: radial-gradient(circle at center, rgba(6, 12, 24, 0.22), rgba(3, 7, 18, 0.72));
+  backdrop-filter: blur(6px);
+  z-index: 20;
+  pointer-events: none;
+}
+
+.ai-card {
+  width: min(680px, 92%);
+  padding: 22px 24px 20px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(8, 17, 34, 0.92), rgba(10, 25, 52, 0.88));
+  border: 1px solid rgba(116, 197, 255, 0.28);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(76, 180, 255, 0.12) inset;
+}
+
+.ai-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #eaf6ff;
+  text-shadow: 0 0 18px rgba(72, 187, 255, 0.25);
+}
+
+.ai-subtitle {
+  margin-top: 8px;
+  font-size: 13px;
+  color: rgba(214, 238, 255, 0.72);
+}
+
+.ai-progress-shell {
+  margin-top: 18px;
+}
+
+.ai-progress-track {
+  position: relative;
+  height: 14px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(116, 197, 255, 0.18);
+}
+
+.ai-progress-glow {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.14), transparent);
+  animation: scanMove 1.8s linear infinite;
+}
+
+.ai-progress-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2dd4ff 0%, #1677ff 48%, #9b5cff 100%);
+  box-shadow: 0 0 18px rgba(45, 212, 255, 0.45);
+  transition: width 0.25s ease;
+}
+
+.ai-progress-text {
+  margin-top: 10px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: rgba(215, 238, 255, 0.82);
+  text-align: center;
+}
+
+@keyframes scanMove {
+  0% { transform: translateX(-45%); }
+  100% { transform: translateX(145%); }
+}
+
 @media (max-width: 768px) {
   .facade-canvas-wrap {
     min-height: 200px;
@@ -311,10 +409,12 @@ onBeforeUnmount(() => {
     padding: 6px 10px;
     font-size: 12px;
   }
+  .ai-card { padding: 18px 16px 16px; }
+  .ai-title { font-size: 16px; }
+  .ai-subtitle { font-size: 12px; }
 }
 
 @media (hover: none) and (pointer: coarse) {
-  /* 触屏设备隐藏 hover tooltip，避免与点击手势重叠 */
   .grid-tooltip { display: none; }
 }
 </style>

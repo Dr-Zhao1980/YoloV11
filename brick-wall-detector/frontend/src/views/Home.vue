@@ -489,12 +489,26 @@
                 </div>
               </template>
 
+              <!-- 先进行切片模式选择 -->
+              <div class="slice-mode-bar" style="margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid #ebeef5;">
+                <span style="font-size: 14px; font-weight: bold; margin-right: 12px; color: #303133;">请先选择分析模式：</span>
+                <el-radio-group v-model="facadeSliceMode" size="small" @change="handleFacadeModeChange">
+                  <el-radio-button value="manual">
+                    <el-icon style="margin-right:4px"><Grid /></el-icon>手动 N×N 切片
+                  </el-radio-button>
+                  <el-radio-button value="auto">
+                    <el-icon style="margin-right:4px"><MagicStick /></el-icon>智能比例尺切片
+                  </el-radio-button>
+                </el-radio-group>
+              </div>
+
               <el-upload
                 ref="facadeUploadRef"
                 drag
                 :auto-upload="false"
                 :limit="1"
                 :show-file-list="false"
+                :disabled="!facadeSliceMode"
                 accept=".jpg,.jpeg,.png,.tif,.tiff,.webp"
                 :on-change="handleFacadeFileChange"
                 :on-exceed="handleFacadeExceed"
@@ -509,26 +523,53 @@
                   </div>
                 </div>
                 <template v-else>
-                  <el-icon :size="40" color="#0070C0"><UploadFilled /></el-icon>
-                  <div class="el-upload__text">
-                    上传全景大图 / 静安别墅矮墙正射影像
-                  </div>
+                  <template v-if="facadeSliceMode">
+                    <el-icon :size="40" color="#0070C0"><UploadFilled /></el-icon>
+                    <div class="el-upload__text">
+                      上传全景大图 / 静安别墅矮墙正射影像
+                    </div>
+                  </template>
+                  <template v-else>
+                    <el-icon :size="40" color="#c0c4cc"><Grid /></el-icon>
+                    <div class="el-upload__text">
+                      请先选择“手动 N×N 切片”或“智能比例尺切片”
+                    </div>
+                  </template>
                 </template>
                 <template #tip>
                   <div class="el-upload__tip">
-                    支持 Reality Capture 生成的高清正射影像，建议上传 JPG / TIFF（最大 200MB）。
+                    <template v-if="facadeSliceMode">
+                      支持 Reality Capture 生成的高清正射影像，建议上传 JPG / TIFF（最大 200MB）。
+                    </template>
+                    <template v-else>
+                      请选择模式后再上传图片。智能比例尺切片会在上传后立即执行砖缝识别、比例尺建立和浅色轮廓预览。
+                    </template>
                   </div>
                 </template>
               </el-upload>
 
-              <!-- 上传后立即展示图片，并叠加可拖拽 N×N 网格预览（支持拖拽边框缩放分析区域） -->
+              <!-- 手动模式：N×N 网格预览 -->
               <FacadeGridPreview
-                v-if="facadeFile"
+                v-if="facadeFile && facadeSliceMode === 'manual'"
                 :image-file="facadeFile"
                 :grid-mode="facadeForm.gridMode"
                 @update:v-dividers="facadeVDividers = $event"
                 @update:h-dividers="facadeHDividers = $event"
                 @update:frame="facadeFrame = $event"
+              />
+
+              <!-- 智能模式：比例尺切片预览 -->
+              <FacadeAutoPreview
+                v-if="facadeFile && facadeSliceMode === 'auto'"
+                :image-file="facadeFile"
+                :preview-image-url="!facadeUseManualScale ? (facadeCalibResult?.annotatedImageUrl || '') : ''"
+                :wall-width-m="calculatedWallWidth > 0 ? calculatedWallWidth : facadeForm.wallWidthM"
+                :wall-height-m="calculatedWallHeight > 0 ? calculatedWallHeight : facadeForm.wallHeightM"
+                :zone-size-mm="facadeBrickParams.C"
+                :overlap-mm="facadeBrickParams.D"
+                :scale-px-per-mm="facadeActiveScale"
+                @update:frame="facadeFrame = $event"
+                @update:image-size="(w, h) => { facadePreviewNativeW = w; facadePreviewNativeH = h }"
               />
 
               <el-form
@@ -543,25 +584,106 @@
                 <el-form-item label="墙面名称">
                   <el-input v-model="facadeForm.wallName" />
                 </el-form-item>
-                <el-form-item label="墙面宽度(m)">
+                <!-- 自动根据标定比例尺计算 -->
+                <el-form-item v-if="facadeSliceMode === 'auto'" label="墙面实际尺寸">
+                  <div class="auto-size-display">
+                    <span class="size-item">
+                      <label>宽度:</label>
+                      <span class="size-value">{{ calculatedWallWidth > 0 ? calculatedWallWidth.toFixed(2) : '—' }} m</span>
+                    </span>
+                    <span class="size-item">
+                      <label>高度:</label>
+                      <span class="size-value">{{ calculatedWallHeight > 0 ? calculatedWallHeight.toFixed(2) : '—' }} m</span>
+                    </span>
+                    <span class="size-item">
+                      <label>网格:</label>
+                      <span class="size-value">{{ facadeForm.gridSizeM }} m</span>
+                    </span>
+                  </div>
+                  <div v-if="!manualScaleResult?.success && !facadeCalibResult?.success" class="size-hint">
+                    <el-icon><InfoFilled /></el-icon> 请先进行手动框选标定以计算实际尺寸
+                  </div>
+                </el-form-item>
+                <el-form-item v-if="facadeSliceMode === 'manual'" label="墙面宽度(m)">
                   <el-input-number v-model="facadeForm.wallWidthM" :min="1" :precision="2" />
                 </el-form-item>
-                <el-form-item label="墙面高度(m)">
+                <el-form-item v-if="facadeSliceMode === 'manual'" label="墙面高度(m)">
                   <el-input-number v-model="facadeForm.wallHeightM" :min="1" :precision="2" />
                 </el-form-item>
-                <el-form-item label="网格尺寸(m)">
+                <el-form-item v-if="facadeSliceMode === 'manual'" label="网格尺寸(m)">
                   <el-input-number v-model="facadeForm.gridSizeM" :min="1" :precision="1" />
                 </el-form-item>
-                <el-form-item label="切片模式">
+                <!-- 手动模式：N×N 选择 -->
+                <el-form-item v-if="facadeSliceMode === 'manual'" label="切片模式">
                   <el-radio-group v-model="facadeForm.gridMode" size="small">
                     <el-radio-button :value="2">2×2</el-radio-button>
                     <el-radio-button :value="3">3×3</el-radio-button>
                     <el-radio-button :value="4">4×4</el-radio-button>
                   </el-radio-group>
                   <span style="margin-left:8px;font-size:12px;color:#888">
-                    图像将被均匀切割为 {{ facadeForm.gridMode }}×{{ facadeForm.gridMode }} 块（含 10% 边缘重叠）
+                    均匀切割为 {{ facadeForm.gridMode }}×{{ facadeForm.gridMode }} 块（含 10% 边缘重叠）
                   </span>
                 </el-form-item>
+
+                <!-- 智能模式：相关参数按钮 -->
+                <template v-if="facadeSliceMode === 'auto'">
+                  <div style="margin: 10px 0;">
+                    <el-button size="small" @click="paramsDialogVisible = true">
+                      <el-icon><Setting /></el-icon>&nbsp;相关参数
+                    </el-button>
+                    <span style="font-size: 12px; color: #909399; margin-left: 8px;">
+                      A={{ facadeBrickParams.A }}mm, B={{ facadeBrickParams.B }}mm, C={{ facadeBrickParams.C }}mm, D={{ facadeBrickParams.D }}mm
+                    </span>
+                  </div>
+
+                  <!-- 比例尺与切片预览信息 -->
+                  <div class="auto-scale-panel">
+                    <div class="asp-row">
+                      <span class="asp-label">比例尺（墙体尺寸）</span>
+                      <span class="asp-val">{{ facadeAutoScaleWall > 0 ? facadeAutoScaleWall.toFixed(4)+' px/mm' : '— 请填写墙面宽度' }}</span>
+                    </div>
+                    <div class="asp-row" v-if="facadeCalibResult?.success">
+                      <span class="asp-label">比例尺（砖缝标定）</span>
+                      <span class="asp-val asp-green">{{ facadeCalibResult.scalePxPerMm.toFixed(4) }} px/mm（偏差 {{ facadeCalibResult.discrepancyPct }}%）</span>
+                    </div>
+                    <div class="asp-row" v-if="manualScaleResult?.success">
+                      <span class="asp-label">比例尺（手动框选）</span>
+                      <span class="asp-val asp-blue">{{ manualScaleResult.scalePxPerMm.toFixed(4) }} px/mm（偏差 {{ manualScaleResult.discrepancyPct }}%）</span>
+                    </div>
+                    <div class="asp-row">
+                      <span class="asp-label">切片像素边长</span>
+                      <span class="asp-val">{{ facadeAutoTilePx > 0 ? facadeAutoTilePx+' px' : '—' }}</span>
+                    </div>
+                    <div class="asp-row">
+                      <span class="asp-label">估算切片数量</span>
+                      <span class="asp-val" :class="facadeAutoTileCount > 200 ? 'asp-warn' : ''">
+                        {{ facadeAutoTileCount > 0 ? facadeAutoTileCount+'块' : '—' }}
+                        <span v-if="facadeAutoTileCount > 200">（⚠ 较多，推理时间较长）</span>
+                      </span>
+                    </div>
+                    <div class="asp-row" v-if="facadeJobId" style="flex-wrap: wrap; gap: 8px;">
+                      <el-button size="small" type="primary" plain @click="openManualScaleDialog">
+                        <el-icon><Crop /></el-icon>&nbsp;手动框选标定
+                      </el-button>
+                      <el-button size="small" :loading="facadeCalibrating" @click="runBrickCalibration" plain>
+                        <el-icon><MagicStick /></el-icon>&nbsp;自动砖缝标定
+                      </el-button>
+                      <div style="width: 100%; margin-top: 8px;">
+                        <el-checkbox v-if="manualScaleResult?.success" v-model="facadeUseManualScale" style="margin-right:16px" @change="onCalibCheckboxChange('manual')">
+                          使用手动标定值
+                        </el-checkbox>
+                        <el-checkbox v-if="facadeCalibResult?.success" v-model="facadeUseCalibScale" @change="onCalibCheckboxChange('auto')">
+                          使用自动标定值
+                        </el-checkbox>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 标定结果缩略图 -->
+                  <div v-if="facadeCalibResult?.annotatedImageUrl" class="calib-thumb">
+                    <img :src="facadeCalibResult.annotatedImageUrl" alt="砖缝标定" />
+                  </div>
+                </template>
               </el-form>
 
               <div class="facade-actions">
@@ -573,6 +695,15 @@
                 >
                   <el-icon><Search /></el-icon>
                   AI 诊断
+                </el-button>
+                <el-button
+                  v-if="facadeAnalyzing && facadeJobId"
+                  type="danger"
+                  plain
+                  @click="cancelFacadeAnalyze"
+                >
+                  <el-icon><CircleClose /></el-icon>
+                  终止识别
                 </el-button>
                 <el-button disabled>
                   多源碎图云端直拼（研发中）
@@ -586,11 +717,11 @@
             </el-card>
           </section>
 
-          <section v-if="facadeResult" class="facade-result-layout">
+          <section v-if="facadeResult || facadeAnalyzing" class="facade-result-layout">
             <div class="facade-left">
               <!-- 切片拼合视图（每块独立调用模型 → Python 标注 → 合并展示） -->
               <FacadeTileGridView
-                v-if="(facadeResult as any).tiles?.length"
+                v-if="facadeResult && (facadeResult as any).tiles?.length"
                 :stitched-image-url="(facadeResult as any).stitchedImageUrl || null"
                 :stitched-width="(facadeResult as any).stitchedWidth || facadeResult.imageWidth"
                 :stitched-height="(facadeResult as any).stitchedHeight || facadeResult.imageHeight"
@@ -600,20 +731,23 @@
                 :total-detections="(facadeResult as any).totalDetections || 0"
                 :failed-tiles="(facadeResult as any).failedTiles || 0"
               />
-              <!-- 回退：无切片数据时显示热图 -->
+              <!-- 回退：无切片数据时显示热图，或分析中显示进度条 -->
               <FacadeHeatmapCanvas
                 v-else
-                :image-url="facadeResult.sourceImageUrl"
-                :image-width="facadeResult.imageWidth"
-                :image-height="facadeResult.imageHeight"
-                :wall-width-m="facadeResult.wallWidthM"
-                :wall-height-m="facadeResult.wallHeightM"
-                :grids="facadeResult.grids"
-                :detections="facadeResult.detections"
+                :image-url="facadeResult?.sourceImageUrl || facadeCalibResult?.annotatedImageUrl || facadeFileUrl"
+                :image-width="facadeResult?.imageWidth || facadeImageW"
+                :image-height="facadeResult?.imageHeight || facadeImageH"
+                :wall-width-m="facadeResult?.wallWidthM || facadeForm.wallWidthM"
+                :wall-height-m="facadeResult?.wallHeightM || facadeForm.wallHeightM"
+                :grids="facadeResult?.grids || []"
+                :detections="facadeResult?.detections || []"
+                :is-analyzing="facadeAnalyzing"
+                :progress="facadeProgress"
+                :progress-text="facadeProgressText"
                 @select-grid="selectedGrid = $event"
               />
             </div>
-            <div class="facade-right">
+            <div class="facade-right" v-if="facadeResult">
               <FacadeDashboard
                 :summary="facadeResult.summary"
                 :grids="facadeResult.grids"
@@ -690,6 +824,59 @@
             :grid="selectedGrid"
             :tiles="facadeResult?.tiles || []"
           />
+
+          <!-- 手动框选标定对话框 -->
+          <el-dialog
+            v-model="manualScaleDialogVisible"
+            title="手动框选砖块标定比例尺"
+            width="900px"
+            :close-on-click-modal="false"
+            destroy-on-close
+          >
+            <FacadeManualScaleSelector
+              :image-file="facadeFile"
+              :preview-image-url="facadeFileUrl"
+              :brick-length-mm="facadeBrickParams.A"
+              :brick-width-mm="facadeBrickParams.B"
+              @update:scale="(s) => {}"
+              @apply="onManualScaleApplied"
+            />
+          </el-dialog>
+
+          <!-- 相关参数对话框 -->
+          <el-dialog
+            v-model="paramsDialogVisible"
+            title="砖块及切片参数设置"
+            width="500px"
+            :close-on-click-modal="true"
+          >
+            <el-form label-width="100px" size="small">
+              <el-divider content-position="left">砖块尺寸（真实尺寸）</el-divider>
+              <el-form-item label="砖块长 A">
+                <el-input-number v-model="facadeBrickParams.A" :min="100" :max="600" :step="10" :precision="0" style="width:130px" />
+                <span class="unit-hint"> mm</span>
+              </el-form-item>
+              <el-form-item label="砖块宽 B">
+                <el-input-number v-model="facadeBrickParams.B" :min="40" :max="300" :step="5" :precision="0" style="width:130px" />
+                <span class="unit-hint"> mm</span>
+              </el-form-item>
+              <el-divider content-position="left">切片参数</el-divider>
+              <el-form-item label="区域边长 C">
+                <el-input-number v-model="facadeBrickParams.C" :min="200" :max="8000" :step="100" :precision="0" style="width:130px" />
+                <span class="unit-hint"> mm</span>
+              </el-form-item>
+              <el-form-item label="单侧重叠 D">
+                <el-input-number v-model="facadeBrickParams.D" :min="0" :max="2000" :step="50" :precision="0" style="width:130px" />
+                <span class="unit-hint"> mm</span>
+              </el-form-item>
+              <el-form-item>
+                <span style="font-size: 12px; color: #909399;">切片边长 = C + 2D = {{ facadeBrickParams.C + 2*facadeBrickParams.D }}mm</span>
+              </el-form-item>
+            </el-form>
+            <template #footer>
+              <el-button type="primary" size="small" @click="paramsDialogVisible = false">确定</el-button>
+            </template>
+          </el-dialog>
         </el-tab-pane>
       </el-tabs>
 
@@ -713,9 +900,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, getFacadeReport, getModels, getModelDefaults } from '../api'
+import { CircleClose, MagicStick, Crop, Search, ArrowUp, Setting } from '@element-plus/icons-vue'
+import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, calibrateBrickScale, manualScaleCalibration, getFacadeReport, getModels, getModelDefaults, api } from '../api'
 import type { DetectionResult, FacadeResult, ModelParams, AvailableModel, QueueProgress } from '../api'
 import RepairReport from '../components/RepairReport.vue'
 import ShootingGuide from '../components/ShootingGuide.vue'
@@ -725,6 +913,8 @@ import FacadeDashboard from '../components/FacadeDashboard.vue'
 import GridSliceDialog from '../components/GridSliceDialog.vue'
 import FacadeTileGridView from '../components/FacadeTileGridView.vue'
 import FacadeGridPreview from '../components/FacadeGridPreview.vue'
+import FacadeAutoPreview from '../components/FacadeAutoPreview.vue'
+import FacadeManualScaleSelector from '../components/FacadeManualScaleSelector.vue'
 
 // ==================== Constants ====================
 const MAX_FILE_MB = 10
@@ -742,7 +932,6 @@ const DISEASE_COLORS: Readonly<Record<string, string>> = Object.freeze({
 interface Detection {
   id: number
   class: string
-  rawClassName?: string
   rawClassName?: string
   confidence: number
   bbox: number[]
@@ -814,6 +1003,8 @@ const facadeFile = ref<File | null>(null)
 const facadeUploading = ref(false)
 const facadeAnalyzing = ref(false)
 const facadeQueueMsg = ref('')
+const facadeProgress = ref(0)
+const facadeProgressText = ref('AI 深度普查诊断中，请稍候...')
 const facadeJobId = ref('')
 const facadeResult    = ref<FacadeResult | null>(null)
 const facadeVDividers = ref<number[]>([])
@@ -823,6 +1014,122 @@ const facadeImageW    = ref(0)
 const facadeImageH    = ref(0)
 const selectedGrid = ref<any | null>(null)
 const gridSliceDialogVisible = ref(false)
+
+// ── 切片模式 ──────────────────────────────────────────────────
+const facadeSliceMode = ref<'manual' | 'auto' | ''>('')
+// 不再自动运行标定，用户需手动选择标定方式
+
+// 砖块及切片参数（持久化）
+const facadeBrickParams = reactive({ A: 240, B: 115, C: 1200, D: 120 })
+function loadBrickParams() {
+  try {
+    const s = localStorage.getItem('facade_brick_params')
+    if (s) Object.assign(facadeBrickParams, JSON.parse(s))
+  } catch (_) {}
+}
+let calibTimeout: any = null
+watch(facadeBrickParams, (v, oldV) => {
+  localStorage.setItem('facade_brick_params', JSON.stringify(v))
+  if (facadeSliceMode.value === 'auto' && facadeJobId.value && !facadeUseManualScale.value) {
+    if (!oldV || v.A !== oldV.A || v.B !== oldV.B) {
+      clearTimeout(calibTimeout)
+      calibTimeout = setTimeout(() => {
+        void runBrickCalibration()
+      }, 800)
+    }
+  }
+}, { deep: true })
+
+// 本地图片原生尺寸（FacadeAutoPreview 回传，用于预上传阶段的比例尺预估）
+const facadePreviewNativeW = ref(0)
+const facadePreviewNativeH = ref(0)
+
+// 砖缝标定状态
+const facadeCalibrating  = ref(false)
+const facadeCalibResult  = ref<any>(null)
+const facadeUseCalibScale = ref(false)
+
+// 手动框选标定状态
+const manualScaleDialogVisible = ref(false)
+const manualScaleResult = ref<any>(null)
+const facadeUseManualScale = ref(false)
+
+// 参数对话框状态
+const paramsDialogVisible = ref(false)
+
+// ── 比例尺计算 ────────────────────────────────────────────────
+const facadeFileUrl = ref('')
+watch(facadeFile, (f) => {
+  if (facadeFileUrl.value) URL.revokeObjectURL(facadeFileUrl.value)
+  facadeFileUrl.value = f ? URL.createObjectURL(f) : ''
+})
+
+// 墙体尺寸→比例尺（最可靠来源）
+const facadeAutoScaleWall = computed<number>(() => {
+  const W = facadeImageW.value || facadePreviewNativeW.value
+  if (!W || !facadeForm.wallWidthM) return 0
+  return W / (facadeForm.wallWidthM * 1000)
+})
+
+// 根据比例尺自动计算实际墙面尺寸（mm → m）
+const calculatedWallWidth = computed<number>(() => {
+  const W = facadeImageW.value || facadePreviewNativeW.value
+  if (!W || !facadeActiveScale.value) return 0
+  return (W / facadeActiveScale.value) / 1000
+})
+const calculatedWallHeight = computed<number>(() => {
+  const H = facadeImageH.value || facadePreviewNativeH.value
+  if (!H || !facadeActiveScale.value) return 0
+  return (H / facadeActiveScale.value) / 1000
+})
+// 当前生效比例尺
+const facadeActiveScale = computed<number>(() => {
+  if (facadeUseManualScale.value && manualScaleResult.value?.scalePxPerMm > 0)
+    return manualScaleResult.value.scalePxPerMm
+  if (facadeUseCalibScale.value && facadeCalibResult.value?.scalePxPerMm > 0)
+    return facadeCalibResult.value.scalePxPerMm
+  return facadeAutoScaleWall.value
+})
+// 切片像素尺寸（native）
+const facadeAutoTilePx = computed<number>(() => {
+  const s = facadeActiveScale.value
+  if (!s || !facadeBrickParams.C) return 0
+  return Math.round((facadeBrickParams.C + 2 * facadeBrickParams.D) * s)
+})
+// 估算切片数量（与后端 createAutoScaleTiles / FacadeAutoPreview 保持一致的迭代过滤逻辑）
+const facadeAutoTileCount = computed<number>(() => {
+  const W = facadeImageW.value || facadePreviewNativeW.value
+  const H = facadeImageH.value || facadePreviewNativeH.value
+  const s = facadeActiveScale.value || 0
+  const C = facadeBrickParams.C
+  const D = facadeBrickParams.D
+  const stepPx = Math.round(C * s)
+  const tilePx = Math.round((C + 2 * D) * s)
+  if (!stepPx || !tilePx || !W || !H) return 0
+
+  // 考虑 frame 裁剪区域（与 FacadeAutoPreview / 后端 ROI 保持一致）
+  const f = facadeFrame.value
+  const isFullFrame = !f || (f.left < 0.005 && f.top < 0.005 && f.right > 0.995 && f.bottom > 0.995)
+  let x0 = 0, y0 = 0, x1 = W, y1 = H
+  if (!isFullFrame && f) {
+    x0 = Math.round(f.left * W)
+    y0 = Math.round(f.top * H)
+    x1 = Math.round(f.right * W)
+    y1 = Math.round(f.bottom * H)
+  }
+
+  let count = 0
+  for (let y = y0; y < y1; y += stepPx) {
+    for (let x = x0; x < x1; x += stepPx) {
+      const cropW = Math.min(tilePx, x1 - x)
+      const cropH = Math.min(tilePx, y1 - y)
+      if (cropW >= stepPx * 0.3 && cropH >= stepPx * 0.3) {
+        count++
+      }
+    }
+  }
+  return count
+})
 
 const facadeForm = reactive({
   projectName: '静安别墅红砖病害智能检测系统',
@@ -849,7 +1156,41 @@ function validateFacadeFile(raw: File): string | null {
   return null
 }
 
+function resetFacadeContext(options: { keepMode?: boolean } = {}) {
+  facadeUploadRef.value?.clearFiles()
+  facadeFile.value = null
+  facadeJobId.value = ''
+  facadeImageW.value = 0
+  facadeImageH.value = 0
+  facadePreviewNativeW.value = 0
+  facadePreviewNativeH.value = 0
+  facadeResult.value = null
+  facadeReport.value = null
+  selectedGrid.value = null
+  facadeCalibResult.value = null
+  facadeUseCalibScale.value = false
+  facadeProgress.value = 0
+  facadeQueueMsg.value = ''
+  facadeProgressText.value = 'AI 深度普查诊断中，请稍候...'
+  facadeFrame.value = null
+  if (!options.keepMode) {
+    facadeSliceMode.value = ''
+  }
+}
+
+function handleFacadeModeChange(value: 'manual' | 'auto') {
+  if (facadeFile.value || facadeJobId.value || facadeResult.value || facadeCalibResult.value) {
+    resetFacadeContext({ keepMode: true })
+  }
+  facadeSliceMode.value = value
+}
+
 function handleFacadeFileChange(file: any) {
+  if (!facadeSliceMode.value) {
+    ElMessage.warning('请先选择切片模式，再上传图片')
+    facadeUploadRef.value?.clearFiles()
+    return
+  }
   if (!file?.raw) return
   const err = validateFacadeFile(file.raw)
   if (err) {
@@ -863,10 +1204,26 @@ function handleFacadeFileChange(file: any) {
   facadeJobId.value = ''
   facadeImageW.value = 0
   facadeImageH.value = 0
+  facadePreviewNativeW.value = 0
+  facadePreviewNativeH.value = 0
   facadeResult.value = null
   facadeReport.value = null
   selectedGrid.value = null
+  facadeCalibResult.value = null
+  facadeUseCalibScale.value = false
+  facadeProgress.value = 0
+  facadeQueueMsg.value = ''
+  facadeProgressText.value = 'AI 深度普查诊断中，请稍候...'
+  facadeFrame.value = null
   ElMessage.success(`已选择文件：${file.raw.name}`)
+  // 手动模式：需要填写宽高后才能上传
+  if (facadeSliceMode.value === 'manual' && facadeForm.wallWidthM > 0 && facadeForm.wallHeightM > 0) {
+    void uploadFacade()
+  }
+  // 智能模式：直接上传（使用默认宽高，之后通过标定修正）
+  if (facadeSliceMode.value === 'auto') {
+    void uploadFacade()
+  }
 }
 
 function handleFacadeExceed(files: File[]) {
@@ -883,18 +1240,33 @@ async function uploadFacade() {
     ElMessage.warning('请先上传全景立面影像')
     return
   }
-  if (!facadeForm.wallWidthM || !facadeForm.wallHeightM) {
+  // 手动模式需要填写宽高
+  if (facadeSliceMode.value === 'manual' && (!facadeForm.wallWidthM || !facadeForm.wallHeightM)) {
     ElMessage.warning('请填写墙体实际宽度和高度')
     return
   }
+
+  // 智能模式：如果有标定结果则使用计算值，否则使用默认表单值
+  const useWidthM = facadeSliceMode.value === 'auto' && facadeActiveScale.value
+    ? (calculatedWallWidth.value || facadeForm.wallWidthM)
+    : facadeForm.wallWidthM
+  const useHeightM = facadeSliceMode.value === 'auto' && facadeActiveScale.value
+    ? (calculatedWallHeight.value || facadeForm.wallHeightM)
+    : facadeForm.wallHeightM
+
+  if (!useWidthM || !useHeightM) {
+    ElMessage.warning('无法计算墙面实际尺寸')
+    return
+  }
+
   try {
     facadeUploading.value = true
     const result = await uploadFacadePanorama({
       panorama: facadeFile.value,
       projectName: facadeForm.projectName,
       wallName: facadeForm.wallName,
-      wallWidthM: facadeForm.wallWidthM,
-      wallHeightM: facadeForm.wallHeightM,
+      wallWidthM: useWidthM,
+      wallHeightM: useHeightM,
       gridSizeM: facadeForm.gridSizeM,
       tileSize: 1280,
       overlapRatio: 0.15
@@ -903,11 +1275,85 @@ async function uploadFacade() {
     facadeJobId.value = result.jobId
     facadeImageW.value = (result as any).imageWidth  || 0
     facadeImageH.value = (result as any).imageHeight || 0
-    ElMessage.success('全景大图上传成功，请点击 AI 诊断')
+    facadeProgressText.value = '上传成功，请进行比例尺标定'
+    facadeProgress.value = 10
+
+    // 智能模式：上传成功后自动打开手动标定对话框
+    if (facadeSliceMode.value === 'auto') {
+      setTimeout(() => {
+        openManualScaleDialog()
+      }, 300)
+    }
+    ElMessage.success('全景大图上传成功，请进行手动框选标定')
   } catch (error: any) {
     ElMessage.error(error.message || '全景图上传失败')
   } finally {
     facadeUploading.value = false
+  }
+}
+
+async function runBrickCalibration() {
+  if (!facadeJobId.value) { ElMessage.warning('请先上传图片再标定'); return }
+  try {
+    facadeCalibrating.value = true
+    const result: any = await calibrateBrickScale(
+      facadeJobId.value, facadeBrickParams.A, facadeBrickParams.B
+    )
+    facadeCalibResult.value = result
+    if (result.success) {
+      facadeUseCalibScale.value = true
+      ElMessage.success(`砖缝标定完成：${result.scalePxPerMm.toFixed(4)} px/mm（偏差 ${result.discrepancyPct}%）`)
+    } else {
+      ElMessage.warning(result.message || '砖缝特征不明显，建议使用墙体尺寸比例尺')
+    }
+  } catch (e: any) {
+    ElMessage.error(e.message || '砖缝标定失败')
+  } finally {
+    facadeCalibrating.value = false
+  }
+}
+
+// ── 手动框选比例尺标定 ──────────────────────────────────────────
+function openManualScaleDialog() {
+  if (!facadeJobId.value) {
+    ElMessage.warning('请先上传图片')
+    return
+  }
+  manualScaleDialogVisible.value = true
+}
+
+function onCalibCheckboxChange(source: 'auto' | 'manual') {
+  if (source === 'auto' && facadeUseCalibScale.value) {
+    facadeUseManualScale.value = false
+  } else if (source === 'manual' && facadeUseManualScale.value) {
+    facadeUseCalibScale.value = false
+  }
+}
+
+async function onManualScaleApplied(scale: number, longBrickPx: number, shortBrickPx: number) {
+  if (!facadeJobId.value) return
+  try {
+    const result: any = await manualScaleCalibration(
+      facadeJobId.value,
+      longBrickPx,
+      shortBrickPx,
+      facadeBrickParams.A,
+      facadeBrickParams.B
+    )
+    manualScaleResult.value = {
+      ...result,
+      scalePxPerMm: scale,
+    }
+    if (result.success) {
+      facadeUseManualScale.value = true
+      facadeUseCalibScale.value = false
+      manualScaleDialogVisible.value = false
+      ElMessage.success(`手动标定完成：${scale.toFixed(4)} px/mm`)
+    } else {
+      ElMessage.warning(result.message || '手动标定失败')
+    }
+  } catch (e: any) {
+    ElMessage.error(e.message || '手动标定请求失败')
   }
 }
 
@@ -920,71 +1366,90 @@ async function runFacadeAnalyze() {
     ElMessage.warning('请填写墙体实际宽度和高度')
     return
   }
+  if (facadeSliceMode.value === 'auto') {
+    if (!facadeBrickParams.C || facadeBrickParams.C <= 0) {
+      ElMessage.warning('请设置区域边长 C')
+      return
+    }
+    if (!facadeUseManualScale.value && !facadeUseCalibScale.value && !facadeCalibResult.value?.success) {
+      await runBrickCalibration()
+    }
+    if (facadeActiveScale.value <= 0) {
+      ElMessage.warning('无法建立比例尺，请先完成砖缝识别或确认墙体尺寸')
+      return
+    }
+  }
   try {
     facadeAnalyzing.value = true
+    facadeProgress.value = 5
+    facadeProgressText.value = 'AI 深度普查诊断中，请稍候...'
     facadeResult.value = null
     facadeQueueMsg.value = ''
     if (!facadeJobId.value) {
-      const uploadResult = await uploadFacadePanorama({
-        panorama: facadeFile.value,
-        projectName: facadeForm.projectName,
-        wallName: facadeForm.wallName,
-        wallWidthM: facadeForm.wallWidthM,
-        wallHeightM: facadeForm.wallHeightM,
-        gridSizeM: facadeForm.gridSizeM,
-        tileSize: 1280,
-        overlapRatio: 0.15,
-        gridMode: facadeForm.gridMode
-      })
-      if (!uploadResult.success) throw new Error(uploadResult.message || '上传失败')
-      facadeJobId.value = uploadResult.jobId
-      facadeImageW.value = (uploadResult as any).imageWidth  || 0
-      facadeImageH.value = (uploadResult as any).imageHeight || 0
+      await uploadFacade()
+      if (!facadeJobId.value) throw new Error('上传后未获取到任务 ID')
     }
 
-    // 将边框分数 → 像素裁剪坐标（全图时不传）
     const f = facadeFrame.value
     const W = facadeImageW.value
     const H = facadeImageH.value
     const isFullFrame = !f || (f.left < 0.005 && f.top < 0.005 && f.right > 0.995 && f.bottom > 0.995)
     const cropParams = (!isFullFrame && W > 0 && H > 0) ? {
-      cropX:      Math.round(f!.left           * W),
-      cropY:      Math.round(f!.top            * H),
-      cropWidth:  Math.round((f!.right - f!.left) * W),
-      cropHeight: Math.round((f!.bottom - f!.top) * H),
+      cropX:      Math.round(f!.left              * W),
+      cropY:      Math.round(f!.top               * H),
+      cropWidth:  Math.round((f!.right  - f!.left) * W),
+      cropHeight: Math.round((f!.bottom - f!.top)  * H),
     } : {}
 
     facadeQueueMsg.value = ''
+    const analyzeOptions: any = {
+      modelConf:    modelParams.value.modelConf,
+      iouThreshold: modelParams.value.iouThreshold,
+      ...cropParams,
+    }
+
+    if (facadeSliceMode.value === 'auto') {
+      analyzeOptions.sliceMode     = 'auto'
+      analyzeOptions.scalePxPerMm  = facadeActiveScale.value
+      analyzeOptions.zoneSizeMm    = facadeBrickParams.C
+      analyzeOptions.overlapMm     = facadeBrickParams.D
+      analyzeOptions.brickLengthMm = facadeBrickParams.A
+      analyzeOptions.brickWidthMm  = facadeBrickParams.B
+    } else {
+      analyzeOptions.tileSize        = 640
+      analyzeOptions.overlapRatio    = 0.10
+      analyzeOptions.gridMode        = facadeForm.gridMode
+      analyzeOptions.customVDividers = facadeVDividers.value.length ? facadeVDividers.value : undefined
+      analyzeOptions.customHDividers = facadeHDividers.value.length ? facadeHDividers.value : undefined
+    }
+
     const result = await analyzeFacade(
       facadeJobId.value,
-      {
-        tileSize: 640,
-        overlapRatio: 0.10,
-        gridMode: facadeForm.gridMode,
-        modelConf:    modelParams.value.modelConf,
-        iouThreshold: modelParams.value.iouThreshold,
-        customVDividers: facadeVDividers.value.length ? facadeVDividers.value : undefined,
-        customHDividers: facadeHDividers.value.length ? facadeHDividers.value : undefined,
-        ...cropParams,
-      },
+      analyzeOptions,
       (info: QueueProgress) => {
         if (info.status === 'queued') {
           facadeQueueMsg.value = `排队中，您前面还有 ${info.position ?? 0} 位`
-        } else if ((info.tilesTotal ?? 0) > 0) {
-          facadeQueueMsg.value = `已对 ${info.tilesProcessed}/${info.tilesTotal} 块切片分析完成`
         } else if (info.status === 'tiling') {
           facadeQueueMsg.value = '正在切片...'
+        } else if (info.status === 'detecting') {
+          facadeQueueMsg.value = `切片推理中 ${info.tilesProcessed ?? 0}/${info.tilesTotal ?? 0}`
         } else if (info.status === 'stitching') {
           facadeQueueMsg.value = '正在拼合图片...'
-        } else if (info.progress) {
+        } else if (info.status === 'cancelled') {
+          facadeQueueMsg.value = '识别已被用户终止'
+        } else if (typeof info.progress === 'number') {
           facadeQueueMsg.value = `AI 推理中 ${info.progress}%`
         } else {
           facadeQueueMsg.value = info.message || ''
         }
+        if (typeof info.progress === 'number') facadeProgress.value = info.progress
+        facadeProgressText.value = facadeQueueMsg.value || info.message || 'AI 深度普查诊断中，请稍候...'
       }
     )
     if (!result.success) throw new Error((result as any).message || 'AI 诊断失败')
     facadeResult.value = result
+    facadeProgress.value = 100
+    facadeProgressText.value = 'AI 深度普查诊断完成'
     selectedGrid.value = null
     const r = result as any
     if (r.failedTiles > 0) {
@@ -996,6 +1461,7 @@ async function runFacadeAnalyze() {
     ElMessage.error(error.message || '立面普查分析失败')
   } finally {
     facadeAnalyzing.value = false
+    if (facadeProgress.value < 100) facadeProgress.value = 0
   }
 }
 
@@ -1022,6 +1488,20 @@ async function generateFacadeReport() {
     ElMessage.error(error.message || '整墙报告生成失败')
   } finally {
     facadeReportLoading.value = false
+  }
+}
+
+async function cancelFacadeAnalyze() {
+  if (!facadeJobId.value) return
+  try {
+    await api.post(`/facade/cancel/${facadeJobId.value}`)
+    facadeProgress.value = 0
+    facadeProgressText.value = '识别已被用户终止'
+    facadeQueueMsg.value = '识别已被用户终止'
+    facadeAnalyzing.value = false
+    ElMessage.info('已请求终止当前识别进程')
+  } catch (error: any) {
+    ElMessage.error(error.message || '终止识别失败')
   }
 }
 
@@ -1382,6 +1862,7 @@ function onWindowResize() {
 }
 
 onMounted(async () => {
+  loadBrickParams()
   // 加载模型列表
   loadModels()
   // 从系统设置加载默认推理参数（攮管员设置的置信度即将展示在滚块上）
@@ -1687,6 +2168,34 @@ async function generateReport() {
 .slide-down-enter-from, .slide-down-leave-to { max-height: 0; opacity: 0; }
 .slide-down-enter-to, .slide-down-leave-from { max-height: 400px; opacity: 1; }
 
+/* ===================== AUTO SIZE DISPLAY ===================== */
+.auto-size-display {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.size-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+.size-item label {
+  color: #606266;
+}
+.size-value {
+  font-weight: 600;
+  color: #409eff;
+}
+.size-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #909399;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 /* ===================== INFERENCE PARAMS BAR ===================== */
 .infer-params-bar {
   display:flex; align-items:center; gap:8px; flex-wrap:wrap;
@@ -1786,6 +2295,21 @@ async function generateReport() {
 .progress-text { margin-top:10px; color:#555; font-size:14px; }
 .queue-msg { margin-top:8px; color:#e6a23c; font-size:14px; font-weight:500; display:flex; align-items:center; gap:4px; justify-content:center; }
 .facade-queue-msg { margin-top:8px; color:#e6a23c; font-size:14px; font-weight:500; display:flex; align-items:center; gap:4px; }
+
+.slice-mode-bar { display:flex; align-items:center; margin:12px 0 4px; gap:12px; }
+.unit-hint { font-size:12px; color:#909399; margin-left:4px; }
+.auto-scale-panel {
+  background:#f5f7fa; border-radius:6px; padding:10px 14px;
+  margin:8px 0 4px; display:flex; flex-direction:column; gap:6px; font-size:13px;
+}
+.asp-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.asp-label { color:#606266; min-width:130px; font-size:12px; }
+.asp-val { font-weight:500; color:#303133; }
+.asp-green { color:#52c41a; }
+.asp-blue  { color:#409eff; }
+.asp-warn  { color:#e6a23c; }
+.calib-thumb { margin:6px 0; border-radius:6px; overflow:hidden; max-height:180px; }
+.calib-thumb img { width:100%; max-height:180px; object-fit:contain; border-radius:4px; border:1px solid #dcdfe6; }
 
 /* ===================== DETECTION RESULTS ===================== */
 .detection-image-wrap {
