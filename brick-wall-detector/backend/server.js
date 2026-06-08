@@ -537,6 +537,17 @@ function parsePAIResponse(paiResult, imagePath, brickLengthMm = 240, imageWidth 
  * 解析本地 Python YOLOv11 模型服务的返回结果
  * 将原始类别名称映射到系统内部病害类别
  */
+function polygonAreaPx(points) {
+  if (!points || points.length < 3) return 0;
+  let area = 0;
+  for (let i = 0; i < points.length; i++) {
+    const [x1, y1] = points[i];
+    const [x2, y2] = points[(i + 1) % points.length];
+    area += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(area) / 2;
+}
+
 function parseLocalModelResponse(localResult, imagePath, brickLengthMm = 240, imageWidth = 800, imageHeight = 600) {
   const detections = [];
   const rawDetections = localResult.detections || [];
@@ -576,11 +587,15 @@ function parseLocalModelResponse(localResult, imagePath, brickLengthMm = 240, im
     }
 
     const bbox = det.bbox || [0, 0, 0, 0]; // [x, y, w, h]
+    const polygon = det.polygon || det.mask_polygon || null;
     const confidence = det.confidence || 0;
 
     let area = null;
     if (className === '风化' || className === '泛碱') {
-      area = Math.round(bbox[2] * bbox[3] * pixelToMeter * pixelToMeter * 100) / 100;
+      const areaPx = (polygon && polygon.length >= 3)
+        ? polygonAreaPx(polygon)
+        : bbox[2] * bbox[3];
+      area = Math.round(areaPx * pixelToMeter * pixelToMeter * 100) / 100;
     }
 
     let severity = '轻度';
@@ -598,6 +613,7 @@ function parseLocalModelResponse(localResult, imagePath, brickLengthMm = 240, im
       rawClassName: det.raw_class_name || String(rawClass),
       confidence: Math.round(confidence * 100) / 100,
       bbox,
+      polygon: polygon && polygon.length >= 3 ? polygon : null,
       area,
       severity,
       gridId

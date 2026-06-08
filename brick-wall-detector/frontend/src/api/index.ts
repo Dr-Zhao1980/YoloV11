@@ -47,6 +47,8 @@ export interface Detection {
   rawClassName?: string
   confidence: number
   bbox: number[]
+  /** 实例分割多边形顶点 [[x,y], ...]（原图像素坐标） */
+  polygon?: number[][] | null
   area: number | null
   severity: string
   gridId?: string

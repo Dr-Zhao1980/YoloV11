@@ -1,25 +1,26 @@
 #!/usr/bin/env python3
 """
 YOLOv11 推理脚本（子进程模式）
-优先使用 onnxruntime 加载 best.onnx，回退到 ultralytics 加载 best.pt
-用法: python3 run_inference.py <image_path> [confidence]
-输出: JSON 到 stdout
+优先 onnxruntime；.pt 使用 ultralytics（支持实例分割掩膜）
+输出：检测框 + 不规则多边形 polygon + 五色半透明标注图
 """
 import sys
 import os
 import json
 
-# 模型真实类别名 -> 系统显示名
-MODEL_CLASS_MAP = {
-    '01:LF': '裂缝',
-    '02:QS': '缺损',
-    '03:P':  '植物附着',
-    '04:B-FH': '风化',
-    '05:B-FJ': '泛碱',
-}
-# 数字 ID -> 显示名（兜底）
-DISEASE_CLASSES = {0: '裂缝', 1: '缺损', 2: '植物附着', 3: '风化', 4: '泛碱'}
+from segment_utils import (
+    RAW_CLASS_TO_DISPLAY,
+    ID_TO_DISPLAY,
+    ID_TO_RAW,
+    bbox_to_xyxy,
+    mask_xy_to_polygon,
+    ensure_polygon,
+    draw_segmentation_annotations,
+    polygon_area,
+)
+
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_CLASS_MAP = RAW_CLASS_TO_DISPLAY
 
 
 def nms(boxes, iou_thr=0.45):
@@ -45,55 +46,6 @@ def iou(a, b):
     return inter / (area_a + area_b - inter + 1e-6)
 
 
-_DRAW_COLORS = [
-    (231, 76, 60),   # 红
-    (52, 152, 219),  # 蓝
-    (243, 156, 18),  # 橙
-    (155, 89, 182),  # 紫
-    (26, 188, 156),  # 青绿
-]
-
-
-def _draw_annotations(image_path, detections, raw_names_map):
-    """在原图上绘制检测框和标签，返回标注图保存路径"""
-    from PIL import Image, ImageDraw, ImageFont
-    img = Image.open(image_path).convert('RGB')
-    draw = ImageDraw.Draw(img)
-    w, h = img.size
-    line_w = max(2, min(w, h) // 400)
-
-    try:
-        font = ImageFont.truetype(
-            '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
-            max(14, min(w, h) // 80)
-        )
-    except Exception:
-        font = ImageFont.load_default()
-
-    for d in detections:
-        x1, y1, x2, y2 = d['xyxy']
-        cls_id = d.get('class_id', 0)
-        color = _DRAW_COLORS[cls_id % len(_DRAW_COLORS)]
-        # box
-        draw.rectangle([x1, y1, x2, y2], outline=color, width=line_w)
-        # label "<raw> <conf>"
-        raw = d.get('raw_class_name') or raw_names_map.get(cls_id, str(cls_id))
-        label = f"{raw} {d['confidence']:.2f}"
-        try:
-            tb = draw.textbbox((0, 0), label, font=font)
-            tw, th = tb[2] - tb[0], tb[3] - tb[1]
-        except Exception:
-            tw, th = len(label) * 8, 14
-        ly1 = max(0, y1 - th - 4)
-        draw.rectangle([x1, ly1, x1 + tw + 6, ly1 + th + 4], fill=color)
-        draw.text((x1 + 3, ly1 + 2), label, fill=(255, 255, 255), font=font)
-
-    base, ext = os.path.splitext(image_path)
-    annotated_path = base + '_annotated' + (ext if ext else '.jpg')
-    img.save(annotated_path, quality=88)
-    return annotated_path
-
-
 def _build_coord_text(image_path, confidence, detections):
     lines = [
         f"图片名称: {os.path.basename(image_path)}",
@@ -104,37 +56,57 @@ def _build_coord_text(image_path, confidence, detections):
         lines.append("该置信度下未检测到任何病害。")
     else:
         for i, d in enumerate(detections):
-            x1, y1, x2, y2 = d['xyxy']
             raw = d.get('raw_class_name') or d.get('class_name', '?')
+            poly = d.get('polygon') or []
+            if len(poly) >= 3:
+                pts = ' '.join(f"({int(p[0])},{int(p[1])})" for p in poly[:8])
+                if len(poly) > 8:
+                    pts += ' ...'
+                coord = f"多边形顶点: {pts}"
+            else:
+                x1, y1, x2, y2 = d['xyxy']
+                coord = f"坐标: 左上({x1},{y1}) 右下({x2},{y2})"
             lines.append(
-                f"目标 {i+1} | 类别: {raw} | 置信度: {d['confidence']:.2f} | "
-                f"坐标: 左上({x1},{y1}) 右下({x2},{y2})"
+                f"目标 {i+1} | 类别: {raw} | 置信度: {d['confidence']:.2f} | {coord}"
             )
     return '\n'.join(lines)
 
 
-# 模型类别 ID -> raw 标签的反向映射（用于 ONNX，没有 model.names）
-_RAW_NAMES_FOR_ID = {
-    0: '01:LF',
-    1: '02:QS',
-    2: '03:P',
-    3: '04:B-FH',
-    4: '05:B-FJ',
-}
+def _finalize_detections(image_path, detections, confidence, engine, model_names, image_rgb):
+    for idx, d in enumerate(detections):
+        d['id'] = idx + 1
+        ensure_polygon(d, image_rgb)
+        if d.get('polygon'):
+            d['area_px'] = round(polygon_area(d['polygon']), 2)
+
+    annotated_path = draw_segmentation_annotations(image_path, detections, image_rgb)
+    coord_txt = _build_coord_text(image_path, confidence, detections)
+    orig_h, orig_w = image_rgb.shape[:2]
+
+    return {
+        'success': True,
+        'total_detections': len(detections),
+        'detections': detections,
+        'model_names': model_names,
+        'image_width': orig_w,
+        'image_height': orig_h,
+        'annotated_image_path': annotated_path,
+        'coord_txt_content': coord_txt,
+        'engine': engine,
+    }
 
 
 def infer_onnxruntime(image_path, confidence, model_path,
                       iou_threshold=0.45, imgsz=640):
-    """使用 onnxruntime 推理 ONNX 模型（低内存路径）"""
     import onnxruntime as ort
     import numpy as np
     from PIL import Image
 
     INPUT_SIZE = imgsz if imgsz in (320, 416, 640, 1024, 1280) else 640
     img = Image.open(image_path).convert('RGB')
+    image_rgb = np.array(img)
     orig_w, orig_h = img.size
 
-    # letterbox
     scale = min(INPUT_SIZE / orig_w, INPUT_SIZE / orig_h)
     new_w, new_h = int(orig_w * scale), int(orig_h * scale)
     pad_x = (INPUT_SIZE - new_w) // 2
@@ -145,121 +117,196 @@ def infer_onnxruntime(image_path, confidence, model_path,
     canvas.paste(resized, (pad_x, pad_y))
 
     arr = np.array(canvas, dtype=np.float32) / 255.0
-    chw = arr.transpose(2, 0, 1)[np.newaxis]  # [1,3,H,W]
+    chw = arr.transpose(2, 0, 1)[np.newaxis]
 
-    # 限制 ORT 线程数，进一步降低内存峰值
     sess_options = ort.SessionOptions()
     sess_options.intra_op_num_threads = 1
     sess_options.inter_op_num_threads = 1
 
     sess = ort.InferenceSession(model_path, sess_options=sess_options,
                                 providers=['CPUExecutionProvider'])
-    input_name = sess.get_inputs()[0].name
-    output = sess.run(None, {input_name: chw})[0]  # [1, rows, cols]
+    outputs = sess.run(None, {sess.get_inputs()[0].name: chw})
 
-    # YOLO11(-seg): rows = 4(bbox) + num_classes [+ 32(mask_coeff)]
+    # 分割模型：第二输出为 mask prototype
+    if len(outputs) >= 2 and getattr(outputs[1], 'ndim', 0) == 4:
+        return _infer_onnx_segmentation(
+            outputs, image_path, image_rgb, confidence, iou_threshold,
+            scale, pad_x, pad_y, orig_w, orig_h,
+        )
+
+    output = outputs[0]
     _, rows, cols = output.shape
-    num_classes = len(DISEASE_CLASSES)
+    num_classes = len(ID_TO_DISPLAY)
     detections = []
 
     for i in range(cols):
-        cx, cy, w, h = output[0, 0, i], output[0, 1, i], output[0, 2, i], output[0, 3, i]
-        scores = output[0, 4:4+num_classes, i]
+        cx, cy, bw, bh = output[0, 0, i], output[0, 1, i], output[0, 2, i], output[0, 3, i]
+        scores = output[0, 4:4 + num_classes, i]
         cls_id = int(np.argmax(scores))
         conf = float(scores[cls_id])
         if conf < confidence:
             continue
 
-        x1 = int(max(0, (cx - w/2 - pad_x) / scale))
-        y1 = int(max(0, (cy - h/2 - pad_y) / scale))
-        x2 = int(min(orig_w, (cx + w/2 - pad_x) / scale))
-        y2 = int(min(orig_h, (cy + h/2 - pad_y) / scale))
+        x1 = int(max(0, (cx - bw / 2 - pad_x) / scale))
+        y1 = int(max(0, (cy - bh / 2 - pad_y) / scale))
+        x2 = int(min(orig_w, (cx + bw / 2 - pad_x) / scale))
+        y2 = int(min(orig_h, (cy + bh / 2 - pad_y) / scale))
 
-        raw_name = _RAW_NAMES_FOR_ID.get(cls_id, str(cls_id))
+        raw_name = ID_TO_RAW.get(cls_id, str(cls_id))
         detections.append({
             'class_id': cls_id,
             'raw_class_name': raw_name,
-            'class_name': MODEL_CLASS_MAP.get(raw_name, DISEASE_CLASSES.get(cls_id, f'class_{cls_id}')),
+            'class_name': MODEL_CLASS_MAP.get(raw_name, ID_TO_DISPLAY.get(cls_id, f'class_{cls_id}')),
             'confidence': round(conf, 4),
-            'bbox': [x1, y1, x2-x1, y2-y1],
-            'xyxy': [x1, y1, x2, y2]
+            'bbox': [x1, y1, x2 - x1, y2 - y1],
+            'xyxy': [x1, y1, x2, y2],
         })
 
-    # 自定义 IoU 阈值
     kept = nms(detections, iou_thr=iou_threshold)
-    for idx, d in enumerate(kept):
-        d['id'] = idx + 1
+    return _finalize_detections(
+        image_path, kept, confidence, 'onnxruntime', ID_TO_RAW, image_rgb
+    )
 
-    annotated_path = _draw_annotations(image_path, kept, _RAW_NAMES_FOR_ID)
-    coord_txt = _build_coord_text(image_path, confidence, kept)
 
-    return {
-        'success': True,
-        'total_detections': len(kept),
-        'detections': kept,
-        'model_names': _RAW_NAMES_FOR_ID,
-        'image_width': orig_w,
-        'image_height': orig_h,
-        'annotated_image_path': annotated_path,
-        'coord_txt_content': coord_txt,
-        'engine': 'onnxruntime'
-    }
+def _infer_onnx_segmentation(outputs, image_path, image_rgb, confidence, iou_threshold,
+                             scale, pad_x, pad_y, orig_w, orig_h):
+    """YOLO-seg ONNX：检测 + mask 系数，解码为多边形"""
+    import numpy as np
+
+    pred = outputs[0][0]
+    proto = outputs[1][0]
+    num_classes = len(ID_TO_DISPLAY)
+    nm = proto.shape[0]
+    num_det = pred.shape[1]
+    detections = []
+
+    for i in range(num_det):
+        cx, cy, bw, bh = pred[0, i], pred[1, i], pred[2, i], pred[3, i]
+        scores = pred[4:4 + num_classes, i]
+        cls_id = int(np.argmax(scores))
+        conf = float(scores[cls_id])
+        if conf < confidence:
+            continue
+
+        x1 = int(max(0, (cx - bw / 2 - pad_x) / scale))
+        y1 = int(max(0, (cy - bh / 2 - pad_y) / scale))
+        x2 = int(min(orig_w, (cx + bw / 2 - pad_x) / scale))
+        y2 = int(min(orig_h, (cy + bh / 2 - pad_y) / scale))
+
+        coeffs = pred[4 + num_classes:4 + num_classes + nm, i]
+        mask = _decode_mask_polygon(coeffs, proto, x1, y1, x2, y2, orig_w, orig_h)
+
+        raw_name = ID_TO_RAW.get(cls_id, str(cls_id))
+        item = {
+            'class_id': cls_id,
+            'raw_class_name': raw_name,
+            'class_name': MODEL_CLASS_MAP.get(raw_name, ID_TO_DISPLAY.get(cls_id, f'class_{cls_id}')),
+            'confidence': round(conf, 4),
+            'bbox': [x1, y1, x2 - x1, y2 - y1],
+            'xyxy': [x1, y1, x2, y2],
+        }
+        if mask:
+            item['polygon'] = mask
+            item['polygon_source'] = 'onnx_mask'
+        detections.append(item)
+
+    kept = nms(detections, iou_thr=iou_threshold)
+    return _finalize_detections(
+        image_path, kept, confidence, 'onnxruntime-seg', ID_TO_RAW, image_rgb
+    )
+
+
+def _decode_mask_polygon(coeffs, proto, x1, y1, x2, y2, orig_w, orig_h):
+    import numpy as np
+    try:
+        import cv2
+    except ImportError:
+        return None
+
+    c, mh, mw = proto.shape
+    mask = (coeffs.astype(np.float32) @ proto.reshape(c, -1)).reshape(mh, mw)
+    mask = 1 / (1 + np.exp(-mask))
+
+    sx = mw / orig_w
+    sy = mh / orig_h
+    mx1 = max(0, int(x1 * sx))
+    my1 = max(0, int(y1 * sy))
+    mx2 = min(mw, int(x2 * sx))
+    my2 = min(mh, int(y2 * sy))
+    if mx2 <= mx1 or my2 <= my1:
+        return None
+
+    crop = (mask[my1:my2, mx1:mx2] > 0.5).astype(np.uint8) * 255
+    contours, _ = cv2.findContours(crop, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    cnt = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(cnt) < 12:
+        return None
+    epsilon = 0.015 * cv2.arcLength(cnt, True)
+    approx = cv2.approxPolyDP(cnt, max(1.0, epsilon), True)
+    poly = []
+    for p in approx:
+        px = int(p[0][0] / sx)
+        py = int(p[0][1] / sy)
+        poly.append([px, py])
+    return poly if len(poly) >= 3 else None
 
 
 def infer_ultralytics(image_path, confidence, model_path, iou_threshold=0.45, imgsz=640):
-    """使用 ultralytics 推理 .pt 模型（需要 torch）"""
     from ultralytics import YOLO
+    import numpy as np
+    from PIL import Image
+
     model = YOLO(model_path)
-    results = model.predict(source=image_path, imgsz=imgsz, conf=confidence,
-                            iou=iou_threshold, save=False, device='cpu', verbose=False)
+    img = Image.open(image_path).convert('RGB')
+    image_rgb = np.array(img)
+
+    results = model.predict(
+        source=image_path,
+        imgsz=imgsz,
+        conf=confidence,
+        iou=iou_threshold,
+        save=False,
+        device='cpu',
+        verbose=False,
+        retina_masks=True,
+    )
     result = results[0]
 
-    # 保存标注后图片（ultralytics 自动绘制 "05:B-FJ 0.62" 样式标签）
-    base, ext = os.path.splitext(image_path)
-    annotated_path = base + '_annotated' + (ext if ext else '.jpg')
-    result.save(filename=annotated_path)
-
     detections = []
-    coord_lines = [
-        f"图片名称: {os.path.basename(image_path)}",
-        f"测试置信度: {confidence:.2f}",
-        "-" * 40
-    ]
-
     if result.boxes is not None and len(result.boxes) > 0:
+        has_masks = result.masks is not None and len(result.masks) > 0
         for i, box in enumerate(result.boxes):
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
             cls_id = int(box.cls[0])
             raw_name = model.names.get(cls_id, str(cls_id))
             display_name = MODEL_CLASS_MAP.get(raw_name, raw_name)
             conf = float(box.conf[0])
-            detections.append({
-                'id': i + 1,
+
+            item = {
                 'class_id': cls_id,
                 'raw_class_name': raw_name,
                 'class_name': display_name,
                 'confidence': round(conf, 4),
-                'bbox': [x1, y1, x2-x1, y2-y1],
-                'xyxy': [x1, y1, x2, y2]
-            })
-            coord_lines.append(
-                f"目标 {i+1} | 类别: {raw_name} | 置信度: {conf:.2f} | "
-                f"坐标: 左上({x1},{y1}) 右下({x2},{y2})"
-            )
-    else:
-        coord_lines.append("该置信度下未检测到任何病害。")
+                'bbox': [x1, y1, x2 - x1, y2 - y1],
+                'xyxy': [x1, y1, x2, y2],
+            }
+            if has_masks and i < len(result.masks):
+                poly = mask_xy_to_polygon(result.masks.xy[i])
+                if poly:
+                    item['polygon'] = poly
+                    item['polygon_source'] = 'mask'
+            detections.append(item)
 
-    h, w = result.orig_shape
-    return {
-        'success': True,
-        'total_detections': len(detections),
-        'detections': detections,
-        'model_names': model.names,
-        'image_width': w,
-        'image_height': h,
-        'annotated_image_path': annotated_path,
-        'coord_txt_content': '\n'.join(coord_lines)
-    }
+    return _finalize_detections(
+        image_path,
+        detections,
+        confidence,
+        'ultralytics',
+        model.names,
+        image_rgb,
+    )
 
 
 def main():
@@ -277,36 +324,40 @@ def main():
         print(json.dumps({'success': False, 'message': f'图片不存在: {image_path}'}))
         sys.exit(1)
 
-    model_path = selected_model_path or os.environ.get('YOLO_ONNX_PATH',
-                                                       os.path.join(BACKEND_DIR, 'models', 'best.onnx'))
+    model_path = selected_model_path or os.environ.get(
+        'YOLO_ONNX_PATH', os.path.join(BACKEND_DIR, 'models', 'best.onnx')
+    )
     model_path = os.path.abspath(model_path)
     models_dir = os.path.abspath(os.path.join(BACKEND_DIR, 'models'))
     if not model_path.startswith(models_dir + os.sep):
-        print(json.dumps({'success': False,
-                          'message': '模型路径非法'}))
+        print(json.dumps({'success': False, 'message': '模型路径非法'}))
         sys.exit(1)
     if not os.path.exists(model_path):
-        print(json.dumps({'success': False,
-                          'message': f'模型文件不存在: {model_path}'}))
+        print(json.dumps({'success': False, 'message': f'模型文件不存在: {model_path}'}))
         sys.exit(1)
 
     try:
         ext = os.path.splitext(model_path)[1].lower()
         if ext == '.onnx':
-            result = infer_onnxruntime(image_path, confidence, model_path,
-                                       iou_threshold=iou_threshold, imgsz=imgsz)
+            result = infer_onnxruntime(
+                image_path, confidence, model_path,
+                iou_threshold=iou_threshold, imgsz=imgsz,
+            )
         elif ext == '.pt':
-            result = infer_ultralytics(image_path, confidence, model_path,
-                                       iou_threshold=iou_threshold, imgsz=imgsz)
-            result['engine'] = 'ultralytics'
+            result = infer_ultralytics(
+                image_path, confidence, model_path,
+                iou_threshold=iou_threshold, imgsz=imgsz,
+            )
         else:
             raise ValueError(f'不支持的模型格式: {ext}')
         result['model_file'] = os.path.basename(model_path)
         print(json.dumps(result, ensure_ascii=False))
     except Exception as e:
         sys.stderr.write(f'[model-inference] {type(e).__name__}: {e}\n')
-        print(json.dumps({'success': False,
-                          'message': f'模型推理失败: {type(e).__name__}: {e}'}))
+        print(json.dumps({
+            'success': False,
+            'message': f'模型推理失败: {type(e).__name__}: {e}',
+        }))
         sys.exit(1)
 
 

@@ -331,10 +331,10 @@
                       alt="标注图"
                     />
                   </div>
-                  <p class="img-note">由模型自动生成，标签格式：类别代码 置信度（如 05:B-FJ 0.62）</p>
+                  <p class="img-note">由模型自动生成：五色半透明区域 + 类别代码与置信度（实例分割/轮廓）</p>
                 </el-tab-pane>
 
-                <el-tab-pane label="原图+框" name="original">
+                <el-tab-pane label="原图+区域" name="original">
                   <div ref="detectionContainerRef" class="detection-image-wrap original-wrap">
                     <div class="detection-stage" :style="detectionStageStyle">
                     <img
@@ -344,18 +344,14 @@
                       @load="onDetImageLoaded"
                       crossorigin="anonymous"
                     />
-                    <div class="bbox-layer" :style="bboxLayerStyle">
-                      <div
-                        v-for="(det, i) in detectionResult.detections"
-                        :key="det.id"
-                        class="bbox"
-                        :style="getBboxStyle(det)"
-                      >
-                        <span class="bbox-label" :style="getBboxLabelStyle(det, i)">
-                          {{ det.rawClassName || det.class }} {{ det.confidence.toFixed(2) }}
-                        </span>
-                      </div>
-                    </div>
+                    <DetectionMaskOverlay
+                      v-if="imageDisplay.width && imageDisplay.height"
+                      :detections="detectionResult.detections"
+                      :width="detectionResult.imageWidth"
+                      :height="detectionResult.imageHeight"
+                      :display-width="imageDisplay.width"
+                      :display-height="imageDisplay.height"
+                    />
                   </div>
                 </div>
                 </el-tab-pane>
@@ -954,19 +950,13 @@ const FacadeSeverityHeatmapPanel = defineAsyncComponent(
 )
 import { buildFacadeCoordText, downloadTextFile } from '../utils/facadeCoordExport'
 import { computeTileMetrics, countTilesInRegion } from '../utils/facadeTileMetrics'
+import { DISEASE_COLORS, diseaseColor } from '../utils/diseaseColors'
+import DetectionMaskOverlay from '../components/DetectionMaskOverlay.vue'
 
 // ==================== Constants ====================
 const MAX_FILE_MB = 10
 const ACCEPTED_TYPES = ['image/jpeg', 'image/jpg', 'image/png']
 const PROGRESS_TICK_MS = 400
-
-const DISEASE_COLORS: Readonly<Record<string, string>> = Object.freeze({
-  '风化': '#e74c3c',
-  '泛碱': '#3498db',
-  '裂缝': '#f39c12',
-  '植物附着': '#9b59b6',
-  '缺损': '#1abc9c'
-})
 
 interface Detection {
   id: number
@@ -974,6 +964,7 @@ interface Detection {
   rawClassName?: string
   confidence: number
   bbox: number[]
+  polygon?: number[][] | null
   area: number | null
   severity: string
 }
@@ -1713,10 +1704,6 @@ const detectionStageStyle = computed(() => {
     height: `${imageDisplay.value.height}px`
   }
 })
-const bboxLayerStyle = computed(() => ({
-  width: `${imageDisplay.value.width}px`,
-  height: `${imageDisplay.value.height}px`
-}))
 
 // ==================== Helpers ====================
 function formatModelSize(size: number): string {
@@ -1752,10 +1739,6 @@ async function loadModels() {
   } finally {
     modelsLoading.value = false
   }
-}
-
-function diseaseColor(name: string): string {
-  return DISEASE_COLORS[name] || '#999'
 }
 
 function severityType(s: string): 'danger' | 'warning' | 'success' {
@@ -2068,40 +2051,6 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(scrollRaf)
   revokePreview()
 })
-
-function getBboxStyle(det: Detection) {
-  const s = imageScale.value
-  return {
-    left: `${det.bbox[0] * s}px`,
-    top: `${det.bbox[1] * s}px`,
-    width: `${det.bbox[2] * s}px`,
-    height: `${det.bbox[3] * s}px`,
-    borderColor: diseaseColor(det.class)
-  }
-}
-
-function getBboxLabelStyle(det: Detection, index: number) {
-  const bg = diseaseColor(det.class)
-  const s = imageScale.value
-  const x = det.bbox[0] * s
-  const y = det.bbox[1] * s
-  const w = det.bbox[2] * s
-  const labelWidth = Math.max(72, (det.rawClassName || det.class).length * 7 + 36)
-  const preferBottom = y < 26 || index % 2 === 1
-  const alignRight = x + labelWidth > imageDisplay.value.width
-  const alignCenter = !alignRight && w < labelWidth && x > labelWidth / 2
-  return {
-    background: bg,
-    ...(preferBottom
-      ? { top: '100%', bottom: 'auto', marginTop: '4px' }
-      : { top: 'auto', bottom: '100%', marginBottom: '4px' }),
-    ...(alignRight
-      ? { right: '0', left: 'auto', transform: 'none' }
-      : alignCenter
-        ? { left: '50%', right: 'auto', transform: 'translateX(-50%)' }
-        : { left: '0', right: 'auto', transform: 'none' })
-  }
-}
 
 function highlightDisease(name: string) {
   ElMessage.info(`${name} — 点击"生成修缮报告"查看详细修缮方案`)
