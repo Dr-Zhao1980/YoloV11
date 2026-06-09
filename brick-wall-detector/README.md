@@ -62,9 +62,10 @@ cd brick-wall-detector
 # 2. 环境变量
 cp .env.example .env
 
-# 3. 模型（二选一，置于 backend/models/）
-#    best.onnx  — 推荐，内存占用较低
-#    best.pt    — PyTorch / ultralytics 回退
+# 3. Python 推理依赖 + 模型（置于 backend/models/）
+pip install -r backend/requirements.txt
+#    best.onnx  — YOLO11-seg（推荐，实例分割掩膜）
+#    best.pt    — PyTorch（需 ultralytics）
 
 # 4. 安装与构建
 npm install
@@ -174,8 +175,8 @@ brick-wall-detector/
 **Q: `npm start` 提示找不到 package.json？**  
 必须在 `brick-wall-detector` 目录下执行，不是仓库根目录 `YoloV11`。
 
-**Q: 检测无结果或报错？**  
-确认 `backend/models/` 内存在 `best.onnx` 或 `best.pt`，且 Python 依赖已安装；查看 `logs/server.log`。
+**Q: 标注图仍是矩形？**  
+确认已安装 `opencv-python-headless`（`pip install -r backend/requirements.txt`），并使用 **best.onnx（seg）** 或 **best.pt**；重启服务后重新检测。
 
 **Q: 立面热力图与底图错位？**  
 请使用 v1.3.0+：叠加图基于无标注 `sourceImageUrl`，坐标已按 `cropOffset` 换算至分析区；重新点击「生成热力图」。
@@ -187,6 +188,7 @@ brick-wall-detector/
 
 ## 文档
 
+- [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) — **项目目录与文件说明**（从概览到逐文件）  
 - [docs/README.md](docs/README.md) — 文档索引  
 - [docs/HEATMAP.md](docs/HEATMAP.md) — 病害严重程度热力图说明  
 - [docs/platform-integration.md](docs/platform-integration.md) — 课题平台集成专章  

@@ -1,0 +1,8 @@
+# Python 推理依赖（与 .env 中 PYTHON_BIN 指向的环境一致）
+# 安装: pip install -r backend/requirements.txt
+
+numpy>=1.24
+Pillow>=10.0
+opencv-python-headless>=4.8.0
+onnxruntime>=1.16.0
+ultralytics>=8.2.0

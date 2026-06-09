@@ -12,11 +12,11 @@ from segment_utils import (
     RAW_CLASS_TO_DISPLAY,
     ID_TO_DISPLAY,
     ID_TO_RAW,
-    bbox_to_xyxy,
     mask_xy_to_polygon,
     ensure_polygon,
     draw_segmentation_annotations,
     polygon_area,
+    decode_yolo_seg_mask,
 )
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -194,7 +194,7 @@ def _infer_onnx_segmentation(outputs, image_path, image_rgb, confidence, iou_thr
         y2 = int(min(orig_h, (cy + bh / 2 - pad_y) / scale))
 
         coeffs = pred[4 + num_classes:4 + num_classes + nm, i]
-        mask = _decode_mask_polygon(coeffs, proto, x1, y1, x2, y2, orig_w, orig_h)
+        mask = decode_yolo_seg_mask(coeffs, proto, x1, y1, x2, y2, orig_w, orig_h)
 
         raw_name = ID_TO_RAW.get(cls_id, str(cls_id))
         item = {
@@ -214,43 +214,6 @@ def _infer_onnx_segmentation(outputs, image_path, image_rgb, confidence, iou_thr
     return _finalize_detections(
         image_path, kept, confidence, 'onnxruntime-seg', ID_TO_RAW, image_rgb
     )
-
-
-def _decode_mask_polygon(coeffs, proto, x1, y1, x2, y2, orig_w, orig_h):
-    import numpy as np
-    try:
-        import cv2
-    except ImportError:
-        return None
-
-    c, mh, mw = proto.shape
-    mask = (coeffs.astype(np.float32) @ proto.reshape(c, -1)).reshape(mh, mw)
-    mask = 1 / (1 + np.exp(-mask))
-
-    sx = mw / orig_w
-    sy = mh / orig_h
-    mx1 = max(0, int(x1 * sx))
-    my1 = max(0, int(y1 * sy))
-    mx2 = min(mw, int(x2 * sx))
-    my2 = min(mh, int(y2 * sy))
-    if mx2 <= mx1 or my2 <= my1:
-        return None
-
-    crop = (mask[my1:my2, mx1:mx2] > 0.5).astype(np.uint8) * 255
-    contours, _ = cv2.findContours(crop, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None
-    cnt = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(cnt) < 12:
-        return None
-    epsilon = 0.015 * cv2.arcLength(cnt, True)
-    approx = cv2.approxPolyDP(cnt, max(1.0, epsilon), True)
-    poly = []
-    for p in approx:
-        px = int(p[0][0] / sx)
-        py = int(p[0][1] / sy)
-        poly.append([px, py])
-    return poly if len(poly) >= 3 else None
 
 
 def infer_ultralytics(image_path, confidence, model_path, iou_threshold=0.45, imgsz=640):

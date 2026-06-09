@@ -111,10 +111,10 @@ function getAvailableModels() {
   return fs.readdirSync(modelsDir)
     .filter(file => supportedModelExts.has(path.extname(file).toLowerCase()))
     .sort((a, b) => {
-      if (a === 'best.onnx') return -1;
-      if (b === 'best.onnx') return 1;
       if (a === 'best.pt') return -1;
       if (b === 'best.pt') return 1;
+      if (a === 'best.onnx') return -1;
+      if (b === 'best.onnx') return 1;
       if (a === 'Plus.pt') return -1;
       if (b === 'Plus.pt') return 1;
       return a.localeCompare(b);
@@ -130,7 +130,7 @@ function getAvailableModels() {
         type: ext.slice(1),
         size: stat.size,
         updatedAt: stat.mtime.toISOString(),
-        recommended: file === 'best.onnx'
+        recommended: file === 'best.pt' || file === 'best.onnx'
       };
     });
 }
@@ -1541,13 +1541,20 @@ function mapTileDetectionToGlobal(det, tile, job) {
   const bbox = det.bbox || det.box || [0, 0, 0, 0];
   const globalBbox = [bbox[0] + tile.offsetX, bbox[1] + tile.offsetY, bbox[2], bbox[3]];
 
-  const polygon = det.polygon || det.maskPolygon || [
-    [bbox[0], bbox[1]], [bbox[0] + bbox[2], bbox[1]],
-    [bbox[0] + bbox[2], bbox[1] + bbox[3]], [bbox[0], bbox[1] + bbox[3]]
-  ];
-  const globalPolygon = polygon.map(point => ({
-    x: point[0] + tile.offsetX,
-    y: point[1] + tile.offsetY
+  const polygon = det.polygon || det.maskPolygon || null;
+  const normalizedPoly = polygon
+    ? polygon.map(point => (
+        Array.isArray(point)
+          ? [point[0], point[1]]
+          : [point.x, point.y]
+      ))
+    : [
+        [bbox[0], bbox[1]], [bbox[0] + bbox[2], bbox[1]],
+        [bbox[0] + bbox[2], bbox[1] + bbox[3]], [bbox[0], bbox[1] + bbox[3]]
+      ];
+  const globalPolygon = normalizedPoly.map(([px, py]) => ({
+    x: px + tile.offsetX,
+    y: py + tile.offsetY
   }));
 
   const areaPx = polygonArea(globalPolygon);
@@ -2625,6 +2632,7 @@ app.listen(PORT, '0.0.0.0', () => {
   const startupModel = resolveModelPath();
   if (startupModel) {
     console.log(`    ✅ 本地模型: ${startupModel.file} (${(startupModel.size / 1024 / 1024).toFixed(1)} MB)`);
+    console.log(`    ℹ️  实例分割标注需 Python 环境安装 opencv-python-headless（见 backend/requirements.txt）`);
   } else {
     console.log('    ❌  models/ 目录下未找到 .onnx / .pt 模型文件，推理将报错');
   }
