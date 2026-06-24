@@ -20,19 +20,33 @@
 
     <!-- ── 拼合大图视图 ── -->
     <div v-show="viewMode === 'stitched'" class="tgv-stitched-wrap">
-      <div class="tgv-img-container" ref="containerRef" :style="containerStyle" @resize="onContainerResize">
-        <!-- 主图：优先显示拼合标注大图，否则显示原图 -->
+      <div class="tgv-img-container" ref="containerRef" :style="containerStyle">
+        <div v-if="!imgLoaded && stitchedImageUrl" class="tgv-img-skeleton">
+          <el-icon class="is-loading" :size="28"><Loading /></el-icon>
+          <span>拼合图加载中…</span>
+        </div>
+        <div v-else-if="!stitchedImageUrl" class="tgv-img-skeleton">
+          <el-icon :size="28"><PictureFilled /></el-icon>
+          <span>拼合图生成中…</span>
+        </div>
+
         <img
+          v-if="stitchedImageUrl"
           ref="imgRef"
-          :src="stitchedImageUrl || sourceImageUrl"
+          :src="stitchedImageUrl"
           class="tgv-img"
+          :class="{ 'tgv-img--ready': imgLoaded }"
           draggable="false"
+          decoding="async"
+          fetchpriority="high"
           @load="onImgLoad"
+          @error="onImgError"
         />
 
         <!-- 切片边框覆盖层（百分比定位） -->
         <div
           v-for="tile in tiles"
+          v-show="imgLoaded"
           :key="tile.tileId"
           class="tgv-cell"
           :class="{
@@ -108,6 +122,8 @@
           v-if="activeTile.annotatedTileUrl"
           :src="activeTile.annotatedTileUrl"
           class="tgv-modal-img"
+          decoding="async"
+          loading="lazy"
         />
         <el-empty v-else description="该切片暂无标注图" />
 
@@ -141,7 +157,11 @@
               <el-table-column label="#" type="index" width="45" />
               <el-table-column label="病害类型" prop="class" width="100">
                 <template #default="{ row }">
-                  <el-tag size="small" :color="DISEASE_COLORS[row.class]" style="color:#fff;border:none">
+                  <el-tag
+                    size="small"
+                    :color="DISEASE_COLORS[row.class]"
+                    :style="{ color: diseaseLabelTextColor(row.class), border: 'none' }"
+                  >
                     {{ row.class }}
                   </el-tag>
                 </template>
@@ -169,8 +189,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { PictureFilled, Grid, WarningFilled } from '@element-plus/icons-vue'
+import { ref, computed, watch } from 'vue'
+import { PictureFilled, Grid, WarningFilled, Loading } from '@element-plus/icons-vue'
+import { DISEASE_COLORS, diseaseLabelTextColor } from '../utils/diseaseColors'
 
 interface TileInfo {
   tileId: string
@@ -200,16 +221,14 @@ const props = defineProps<{
   failedTiles: number
 }>()
 
-const DISEASE_COLORS: Record<string, string> = {
-  '风化': '#e74c3c', '泛碱': '#3498db', '裂缝': '#f39c12',
-  '植物附着': '#9b59b6', '缺损': '#1abc9c'
-}
-
 const viewMode    = ref<'stitched' | 'grid'>('stitched')
 const imgRef      = ref<HTMLImageElement | null>(null)
 const containerRef = ref<HTMLDivElement | null>(null)
-const imgDisplayW = ref(0)
-const imgDisplayH = ref(0)
+const imgLoaded   = ref(false)
+
+watch(() => props.stitchedImageUrl, () => {
+  imgLoaded.value = false
+})
 
 const containerStyle = computed(() => {
   if (!props.stitchedWidth || !props.stitchedHeight) return {}
@@ -217,13 +236,12 @@ const containerStyle = computed(() => {
 })
 
 function onImgLoad() {
-  const img = imgRef.value
-  if (!img) return
-  imgDisplayW.value = img.clientWidth
-  imgDisplayH.value = img.clientHeight
+  imgLoaded.value = true
 }
 
-function onContainerResize() { onImgLoad() }
+function onImgError() {
+  imgLoaded.value = false
+}
 
 // Percentage-based cell positioning relative to stitched image dims
 function cellStyle(tile: TileInfo) {
@@ -294,14 +312,36 @@ function tileDetections(tile: TileInfo) {
   border-radius: 8px;
   overflow: hidden;
   background: #1e1e1e;
+  contain: layout paint;
+}
+
+.tgv-img-skeleton {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 13px;
+  background: linear-gradient(180deg, #2a2a2a 0%, #1e1e1e 100%);
+  z-index: 1;
 }
 
 .tgv-img {
   display: block;
   width: 100%;
-  height: 100%;
-  object-fit: fill;
+  height: auto;
+  max-height: 65vh;
+  object-fit: contain;
   border-radius: 8px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.tgv-img--ready {
+  opacity: 1;
 }
 
 .tgv-hint {
@@ -318,6 +358,7 @@ function tileDetections(tile: TileInfo) {
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
   box-sizing: border-box;
+  contain: layout style;
 }
 .tgv-cell:hover {
   background: rgba(255, 255, 255, 0.12);
@@ -328,7 +369,7 @@ function tileDetections(tile: TileInfo) {
   border-color: rgba(231, 76, 60, 0.7);
 }
 .tgv-cell.has-detections:hover {
-  border-color: #e74c3c;
+  border-color: #FF7B8A;
   background: rgba(231, 76, 60, 0.12);
 }
 .tgv-cell.tile-failed {
@@ -349,7 +390,7 @@ function tileDetections(tile: TileInfo) {
   position: absolute;
   top: 3px;
   right: 5px;
-  background: #e74c3c;
+  background: #FF7B8A;
   color: #fff;
   font-size: 10px;
   font-weight: 700;
@@ -406,7 +447,7 @@ function tileDetections(tile: TileInfo) {
   border-color: #fbc4c4;
 }
 .tgv-thumb-card.has-detections:hover {
-  border-color: #e74c3c;
+  border-color: #FF7B8A;
 }
 .tgv-thumb-card.tile-failed {
   border-color: #f5dab1;

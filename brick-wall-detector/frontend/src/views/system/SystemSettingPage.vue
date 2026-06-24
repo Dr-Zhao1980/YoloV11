@@ -2,9 +2,12 @@
   <div class="page-container">
     <el-row :gutter="16">
       <el-col :span="16">
-        <el-card v-loading="loading">
+        <el-card v-loading="loading" class="settings-card">
           <template #header>
-            <span style="font-weight: 600;">系统配置</span>
+            <div class="card-header">
+              <span class="card-title">系统配置</span>
+              <span class="card-hint">修改后请点击底部「保存设置」才会生效</span>
+            </div>
           </template>
 
           <el-form :model="settingsForm" label-width="140px" label-position="right">
@@ -16,12 +19,13 @@
               <el-input v-model="settingsForm.systemVersion" disabled />
             </el-form-item>
 
-            <el-divider content-position="left">模型配置</el-divider>
-            <el-form-item label="当前模型版本">
+            <el-divider content-position="left">模型与推理参数</el-divider>
+            <el-form-item label="默认检测模型">
               <el-select
                 v-model="settingsForm.modelVersion"
                 placeholder="暂无可选模型"
                 :disabled="modelOptions.length === 0"
+                style="width: 100%"
               >
                 <el-option
                   v-for="opt in modelOptions"
@@ -30,10 +34,10 @@
                   :value="opt.value"
                 />
               </el-select>
-              <span v-if="modelOptions.length === 0" class="hint-text">暂无可选模型</span>
+              <div class="field-hint">全局默认模型；检测页也可临时切换，需各自确认后生效</div>
             </el-form-item>
             <el-form-item label="置信度阈值">
-              <div style="width:100%">
+              <div class="slider-field">
                 <el-slider
                   v-model="settingsForm.confidenceThreshold"
                   :min="0.05" :max="0.95" :step="0.05"
@@ -41,13 +45,11 @@
                   show-input
                   :format-tooltip="(v: number) => v.toFixed(2)"
                 />
-                <div style="font-size:12px;color:#909399;margin-top:6px">
-                  全局默认置信度，前端检测面板未修改时使用此值（当前 {{ settingsForm.confidenceThreshold.toFixed(2) }}）
-                </div>
+                <div class="field-hint">检测框置信度低于此值将被过滤（当前 {{ settingsForm.confidenceThreshold.toFixed(2) }}）</div>
               </div>
             </el-form-item>
             <el-form-item label="IoU 阈值">
-              <div style="width:100%">
+              <div class="slider-field">
                 <el-slider
                   v-model="settingsForm.iouThreshold"
                   :min="0.10" :max="0.90" :step="0.05"
@@ -55,9 +57,21 @@
                   show-input
                   :format-tooltip="(v: number) => v.toFixed(2)"
                 />
-                <div style="font-size:12px;color:#909399;margin-top:6px">
-                  NMS 去重 IoU 阈值，全局默认（当前 {{ settingsForm.iouThreshold.toFixed(2) }}）
-                </div>
+                <div class="field-hint">NMS 去重 IoU 阈值（当前 {{ settingsForm.iouThreshold.toFixed(2) }}）</div>
+              </div>
+            </el-form-item>
+            <el-form-item label="推理图像尺寸">
+              <el-radio-group v-model="settingsForm.inferImageSize">
+                <el-radio-button :value="320" :disabled="isOnnxModelSelected">320</el-radio-button>
+                <el-radio-button :value="416" :disabled="isOnnxModelSelected">416</el-radio-button>
+                <el-radio-button :value="640">640</el-radio-button>
+                <el-radio-button :value="1024" :disabled="isOnnxModelSelected">1024</el-radio-button>
+                <el-radio-button :value="1280" :disabled="isOnnxModelSelected">1280</el-radio-button>
+              </el-radio-group>
+              <div class="field-hint">
+                {{ isOnnxModelSelected
+                  ? '当前为 ONNX 模型，固定 640×640 输入（更大尺寸仅 .pt 模型可用）'
+                  : 'px（建议 640）' }}
               </div>
             </el-form-item>
             <el-form-item label="生成热力图">
@@ -73,18 +87,14 @@
                 v-model="settingsForm.maxConcurrent"
                 :min="1" :max="4" :step="1"
               />
-              <div style="font-size:12px;color:#909399;margin-top:4px">
-                同时处理的推理任务数（1=单线程，默认），建议保持 1 防止内存溢出
-              </div>
+              <div class="field-hint">同时处理的推理任务数（1=单线程，默认），建议保持 1 防止内存溢出</div>
             </el-form-item>
             <el-form-item label="最大排队数">
               <el-input-number
                 v-model="settingsForm.maxQueueSize"
                 :min="1" :max="50" :step="1"
               />
-              <div style="font-size:12px;color:#909399;margin-top:4px">
-                队列满后拒绝新请求，防止无限堆积（当前: {{ settingsForm.maxQueueSize }} 位）
-              </div>
+              <div class="field-hint">队列满后拒绝新请求，防止无限堆积（当前: {{ settingsForm.maxQueueSize }} 位）</div>
             </el-form-item>
 
             <el-divider content-position="left">存储配置</el-divider>
@@ -118,7 +128,7 @@
       </el-col>
 
       <el-col :span="8">
-        <el-card v-loading="statusLoading">
+        <el-card v-loading="statusLoading" class="status-card">
           <template #header>
             <span style="font-weight: 600;">系统状态</span>
           </template>
@@ -149,7 +159,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   getSystemSettings,
@@ -171,6 +181,7 @@ const settingsForm = reactive({
   modelVersion: '',
   confidenceThreshold: 0.30,
   iouThreshold: 0.45,
+  inferImageSize: 640,
   enableHeatmap: true,
   enableAutoReport: true,
   storageType: '',
@@ -187,12 +198,26 @@ const systemStatus = reactive({
   lastUpdateTime: ''
 })
 
+const isOnnxModelSelected = computed(() =>
+  String(settingsForm.modelVersion || '').toLowerCase().endsWith('.onnx')
+)
+
+watch(isOnnxModelSelected, (onnx) => {
+  if (onnx && settingsForm.inferImageSize !== 640) {
+    settingsForm.inferImageSize = 640
+  }
+})
+
 async function fetchSettings() {
   loading.value = true
   try {
     const res: any = await getSystemSettings()
     if (res.code === 200 && res.data) {
       Object.assign(settingsForm, res.data)
+      if (!settingsForm.inferImageSize) settingsForm.inferImageSize = 640
+      if (String(settingsForm.modelVersion || '').toLowerCase().endsWith('.onnx')) {
+        settingsForm.inferImageSize = 640
+      }
     }
   } catch (err: any) {
     ElMessage.error(err.message || '加载配置失败')
@@ -242,7 +267,7 @@ async function handleSave() {
   try {
     const res: any = await updateSystemSettings(settingsForm as any)
     if (res.code === 200) {
-      ElMessage.success(res.message || '保存成功')
+      ElMessage.success(res.message || '保存成功，推理参数已更新')
       fetchSettings()
     } else {
       ElMessage.error(res.message || '保存失败')
@@ -267,6 +292,45 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.settings-card,
+.status-card {
+  border-radius: 12px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.card-title {
+  font-weight: 600;
+}
+
+.card-hint {
+  font-size: 12px;
+  color: #909399;
+}
+
+.slider-field {
+  width: 100%;
+}
+
+.field-hint {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+.inline-hint {
+  margin-left: 10px;
+  font-size: 12px;
+  color: #909399;
 }
 
 .hint-text {

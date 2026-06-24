@@ -5,8 +5,8 @@
         <div class="system-icon">
           <el-icon :size="48"><Monitor /></el-icon>
         </div>
-        <h1 class="system-title">红砖墙病害智能检测系统</h1>
-        <p class="system-desc">基于YOLOv11深度学习的建筑病害智能识别与修缮报告平台</p>
+        <h1 class="system-title">{{ SYSTEM_NAME }}</h1>
+        <p class="system-desc">基于机器视觉与 YOLOv11 的历史工业建筑外立面病害智能识别与修缮报告平台</p>
       </div>
 
       <!-- 登录/注册切换 -->
@@ -79,7 +79,7 @@
       </div>
 
       <div class="login-footer">
-        <span>红砖墙病害智能检测系统 v1.0</span>
+        <span>{{ SYSTEM_NAME_SHORT }} v1.0</span>
       </div>
     </div>
   </div>
@@ -87,6 +87,7 @@
 
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
+import { SYSTEM_NAME, SYSTEM_NAME_SHORT } from '@/constants/system'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import type { FormInstance } from 'element-plus'
@@ -216,7 +217,8 @@ async function handleRegister() {
 .system-icon { color: #0070C0; margin-bottom: 12px; }
 
 .system-title {
-  font-size: 22px; font-weight: 700; color: #1a1a2e; margin-bottom: 8px;
+  font-size: 18px; font-weight: 700; color: #1a1a2e; margin-bottom: 8px;
+  line-height: 1.4; letter-spacing: 0.3px;
 }
 
 .system-desc { font-size: 13px; color: #888; line-height: 1.5; }

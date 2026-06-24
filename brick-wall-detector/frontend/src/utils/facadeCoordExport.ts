@@ -7,6 +7,7 @@ import {
   PIXEL_COORD_SYSTEM_DESC,
   WALL_COORD_SYSTEM_DESC,
 } from './facadeCoordTransform'
+import { SYSTEM_NAME } from '../constants/system'
 
 export interface FacadeCoordMeta {
   projectName?: string
@@ -49,7 +50,7 @@ export function buildFacadeCoordText(
   const transform = coordTransformFromMeta(meta)
   const lines: string[] = [
     '========================================',
-    '  红砖墙病害检测坐标文件 - 立面普查模式',
+    '  历史工业建筑外立面病害检测坐标文件 - 立面普查模式',
     '========================================',
     '',
     `项目名称: ${meta.projectName || '立面普查'}`,
@@ -146,7 +147,7 @@ export function buildFacadeCoordText(
   lines.push('')
   lines.push('========================================')
   lines.push(`  文件生成时间: ${new Date().toLocaleString('zh-CN')}`)
-  lines.push('  红砖墙病害智能检测系统 - 立面普查模式')
+  lines.push(`  ${SYSTEM_NAME} - 立面普查模式`)
   lines.push('========================================')
   return lines.join('\n')
 }

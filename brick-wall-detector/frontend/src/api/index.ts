@@ -7,19 +7,20 @@ import axios from 'axios'
 // 创建 axios 实例
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
-  timeout: 60000,
-  headers: {
-    'Content-Type': 'application/json'
-  }
+  timeout: 120000,
 })
 
-// 请求拦截器：自动附带 access_token，便于后端识别用户进行历史/日志归属
+// 请求拦截器：自动附带 access_token；FormData 由浏览器自动设置 boundary
 api.interceptors.request.use(
   (config) => {
     const token = typeof localStorage !== 'undefined' ? localStorage.getItem('access_token') : null
     if (token) {
       config.headers = config.headers || {}
       config.headers.Authorization = `Bearer ${token}`
+    }
+    if (config.data instanceof FormData) {
+      config.headers = config.headers || {}
+      delete config.headers['Content-Type']
     }
     return config
   },
@@ -34,6 +35,12 @@ api.interceptors.response.use(
     return response.data
   },
   (error) => {
+    if (!error.response) {
+      const hint = error.code === 'ECONNABORTED'
+        ? '请求超时，请检查网络或缩小图片后重试'
+        : '无法连接后端服务，请确认已运行 npm start（默认端口 3080）'
+      return Promise.reject(new Error(hint))
+    }
     const message = error.response?.data?.message || error.message || '请求失败'
     return Promise.reject(new Error(message))
   }
@@ -71,8 +78,11 @@ export interface ModelParams {
 export interface AvailableModel {
   id: string
   name: string
+  label?: string
   file: string
   type: string
+  version?: string | null
+  description?: string
   size: number
   updatedAt: string
   recommended?: boolean
@@ -207,7 +217,29 @@ export async function getModels(): Promise<{ success: boolean; models: Available
   return api.get('/models')
 }
 
-export async function getModelDefaults(): Promise<{ success: boolean; modelConf: number; iouThreshold: number }> {
+export async function getUploadLimits(): Promise<{
+  success: boolean
+  singleMaxMb: number
+  facadeMaxMb: number
+}> {
+  return api.get('/upload-limits')
+}
+
+export async function getAppConfig(): Promise<{
+  success: boolean
+  enableHeatmap: boolean
+  enableAutoReport: boolean
+}> {
+  return api.get('/app-config')
+}
+
+export async function getModelDefaults(): Promise<{
+  success: boolean
+  modelConf: number
+  iouThreshold: number
+  inferImageSize?: number
+  modelId?: string | null
+}> {
   return api.get('/model-defaults')
 }
 
@@ -231,9 +263,11 @@ export async function detectDisease(
   if (modelParams?.imageSize !== undefined) formData.append('imageSize', String(modelParams.imageSize))
   if (modelParams?.modelId) formData.append('modelId', modelParams.modelId)
 
+  const fileMb = imageFile.size / (1024 * 1024)
+  const uploadTimeout = Math.min(600000, Math.max(120000, Math.ceil(fileMb * 5000)))
+
   const initial: any = await api.post('/detect', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 30000
+    timeout: uploadTimeout,
   })
   if (!initial?.jobId) return initial as DetectionResult
 
@@ -378,8 +412,7 @@ export async function uploadFacadePanorama(
   if (payload.gridMode) formData.append('gridMode', String(payload.gridMode))
 
   return api.post('/facade/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 120000
+    timeout: 600000,
   })
 }
 
@@ -527,8 +560,7 @@ export async function checkImageQuality(imageFile: File): Promise<QualityCheckRe
   const formData = new FormData()
   formData.append('image', imageFile)
   return api.post('/quality-check', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    timeout: 30000
+    timeout: 60000
   })
 }
 

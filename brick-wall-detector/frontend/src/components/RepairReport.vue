@@ -176,6 +176,7 @@
 import { computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { exportPdfFromHtml, exportTextFile, exportWordFromHtml, escHtml } from '../utils/reportExport'
+import { DEFAULT_REPORT_TITLE } from '../constants/system'
 
 const props = defineProps<{ report: any }>()
 
@@ -198,7 +199,7 @@ function fmtDate(iso: string) { return iso ? new Date(iso).toLocaleString('zh-CN
 // ==================== Export ====================
 function filename(ext: string) {
   const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
-  return `砖墙修缮报告_${ts}.${ext}`
+  return `外立面修缮报告_${ts}.${ext}`
 }
 
 function download(content: string | Blob, name: string, mime: string) {
@@ -227,7 +228,7 @@ function buildReportText(): string {
   const r = props.report
   const a = r.overallAssessment
   const lines: string[] = [
-    r.title || '红砖墙病害修缮报告',
+    r.title || DEFAULT_REPORT_TITLE,
     `生成时间: ${fmtDate(r.generatedAt)}`,
     '',
     '【总体评估】',
@@ -303,7 +304,7 @@ function exportMarkdown() {
   const a = r.overallAssessment
   const lines: string[] = []
 
-  lines.push(`# ${r.title || '红砖墙病害修缮报告'}`)
+  lines.push(`# ${r.title || DEFAULT_REPORT_TITLE}`)
   lines.push('')
   lines.push(`**生成时间：** ${fmtDate(r.generatedAt)}`)
   lines.push('')

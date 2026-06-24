@@ -142,8 +142,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 
-// 手机默认折叠，桌面默认展开
-const expanded = ref(typeof window === 'undefined' ? true : window.innerWidth > 768)
+// 默认收起，需要时手动展开
+const expanded = ref(false)
 const activeStep = ref(0)
 
 const steps = [
@@ -176,12 +176,16 @@ const steps = [
 
 <style scoped>
 .shooting-guide {
-  background: linear-gradient(135deg, #f0f9ff 0%, #e6f2fb 100%);
-  border: 1px solid #d6ebf7;
-  border-radius: 14px;
-  padding: 16px 18px;
-  margin-bottom: 20px;
-  box-shadow: 0 2px 12px rgba(0, 112, 192, 0.06);
+  background: linear-gradient(135deg, #f8fbff 0%, #eef6fc 100%);
+  border: 1px solid #dceaf5;
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 8px rgba(0, 112, 192, 0.05);
+  transition: box-shadow 0.2s ease;
+}
+.shooting-guide:hover {
+  box-shadow: 0 2px 14px rgba(0, 112, 192, 0.08);
 }
 
 /* ==================== HEADER ==================== */
@@ -200,9 +204,9 @@ const steps = [
 }
 
 .gh-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
   background: linear-gradient(135deg, #0070C0, #0080CB);
   display: flex;
   align-items: center;

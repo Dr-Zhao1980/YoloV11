@@ -9,7 +9,7 @@
 
 ### 1.1 项目是什么
 
-**红砖墙病害智能检测与查勘平台**（`brick-wall-detector`）是一套面向历史建筑清水砖墙的 **Web 查勘系统**：
+**基于机器视觉的历史工业建筑外立面病害智能诊断系统**（npm 包名 `brick-wall-detector`）是一套面向历史工业建筑外立面的 **Web 查勘与诊断系统**：
 
 - 上传墙面照片或立面全景图  
 - 调用 **YOLOv11** 识别五类病害（裂缝、缺损、植物附着、风化、泛碱）  
@@ -213,7 +213,9 @@ backend/
 ├── model_service.py        # 模型相关辅助
 ├── onnx_infer.js           # ONNX 推理预留/实验
 ├── export_onnx.py          # 导出 ONNX 权重脚本
-├── models/                 # 放置 best.onnx / best.pt（权重通常不入 Git）
+├── models/                 # brick-wall-v1.onnx / brick-wall-v2.onnx（权重通常不入 Git）
+├── model_registry.js       # 模型注册、别名、推荐标记
+├── export_onnx.py          # brick-wall-v2.pt → ONNX 导出
 ├── data/                   # 运行时 JSON 数据（部分 gitignore）
 ├── uploads/                # 用户上传图、切片图（gitignore）
 └── test-images/            # 本地测试样例图
@@ -245,8 +247,9 @@ backend/
 
 | 内容 | 说明 |
 |------|------|
-| `best.onnx` | 推荐：ONNX 推理，内存占用较低 |
-| `best.pt` | PyTorch / ultralytics 回退 |
+| `brick-wall-v1.onnx` | 第一版 ONNX 实例分割 |
+| `brick-wall-v2.onnx` | **第二版（推荐）**，由 `export_onnx.py` 从 `brick-wall-v2.pt`（即 **Plus.pt**）导出 |
+| `brick-wall-v2.pt` | 第二版 PyTorch 源权重，即训练产出的 **Plus.pt**（有 ONNX 时不列入 API 列表） |
 | `.gitkeep` | 保留空目录结构 |
 
 #### `backend/uploads/`（运行时）

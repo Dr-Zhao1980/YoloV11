@@ -13,18 +13,45 @@
         </div>
       </div>
     </div>
-    <canvas
-      ref="canvasRef"
-      class="facade-canvas"
-      @click="handleCanvasClick"
-      @mousemove="handleCanvasMove"
-      @mouseleave="hoverGrid = null"
-    />
+
+    <div ref="stageRef" class="facade-stage" :style="stageStyle">
+      <img
+        v-if="imageUrl"
+        ref="bgImgRef"
+        :src="imageUrl"
+        class="facade-bg-img"
+        alt="立面底图"
+        decoding="async"
+        draggable="false"
+        @load="onBgLoad"
+        @error="onBgError"
+      />
+      <div v-else class="facade-bg-placeholder">等待底图...</div>
+
+      <canvas
+        ref="canvasRef"
+        class="facade-overlay-canvas"
+        :width="overlaySize.w"
+        :height="overlaySize.h"
+        @click="handleCanvasClick"
+        @mousemove="handleCanvasMove"
+        @mouseleave="hoverGrid = null"
+      />
+    </div>
 
     <div v-if="hoverGrid" class="grid-tooltip">
       <div>{{ hoverGrid.gridId }}</div>
       <div>病害 {{ hoverGrid.totalCount }} 处</div>
       <div>面积 {{ hoverGrid.totalAreaM2 }} m²</div>
+    </div>
+
+    <div v-if="!isAnalyzing && grids.length" class="disease-legend">
+      <span class="legend-title">定损说明</span>
+      <span class="legend-item">网格编号如 R1-C5 用于定位</span>
+      <span class="legend-item">
+        <i class="legend-swatch legend-swatch--heat"></i>
+        底色深浅表示该格病害密度
+      </span>
     </div>
   </div>
 </template>
@@ -47,14 +74,6 @@ interface FacadeGrid {
   tileIds: string[]
 }
 
-interface FacadeDetection {
-  id: number
-  class: string
-  confidence: number
-  globalBbox: number[]
-  globalPolygon?: Array<{ x: number; y: number }>
-}
-
 const props = defineProps<{
   imageUrl: string
   imageWidth: number
@@ -62,7 +81,7 @@ const props = defineProps<{
   wallWidthM: number
   wallHeightM: number
   grids: FacadeGrid[]
-  detections?: FacadeDetection[]
+  detections?: unknown[]
   isAnalyzing?: boolean
   progress?: number
   progressText?: string
@@ -72,115 +91,167 @@ const emit = defineEmits<{
   (event: 'select-grid', grid: FacadeGrid): void
 }>()
 
-const canvasRef = ref<HTMLCanvasElement | null>(null)
 const wrapRef = ref<HTMLDivElement | null>(null)
-const imageObj = ref<HTMLImageElement | null>(null)
+const stageRef = ref<HTMLDivElement | null>(null)
+const bgImgRef = ref<HTMLImageElement | null>(null)
+const canvasRef = ref<HTMLCanvasElement | null>(null)
 const hoverGrid = ref<FacadeGrid | null>(null)
 const containerWidth = ref(0)
+const displaySize = ref({ w: 0, h: 0 })
+const bgReady = ref(false)
+
 const progressPct = computed(() => Math.max(0, Math.min(100, props.progress ?? 0)))
 const progressLabel = computed(() => props.progressText || '正在执行 AI 诊断')
 
-const displayScale = computed(() => {
-  const w = containerWidth.value || 980
-  // 视口高度的 70% 作为最大渲染高度，手机竖屏时图像也不会太高
-  const viewportH = typeof window !== 'undefined' ? window.innerHeight : 680
-  const maxHeight = Math.max(360, Math.min(680, viewportH * 0.7))
-  return Math.min(w / props.imageWidth, maxHeight / props.imageHeight, 2)
+const logicalSize = computed(() => {
+  const img = bgImgRef.value
+  const w = img?.naturalWidth || props.imageWidth || 1
+  const h = img?.naturalHeight || props.imageHeight || 1
+  return { w: Math.max(1, w), h: Math.max(1, h) }
 })
 
-function loadImage() {
-  if (!props.imageUrl) return
-  const image = new Image()
-  image.crossOrigin = 'anonymous'
-  image.onload = () => {
-    imageObj.value = image
-    drawCanvas()
+const displayScale = computed(() => {
+  const { w: imgW, h: imgH } = logicalSize.value
+  const cw = containerWidth.value || 980
+  const viewportH = typeof window !== 'undefined' ? window.innerHeight : 680
+  const maxHeight = Math.max(360, Math.min(680, viewportH * 0.7))
+  return Math.min(cw / imgW, maxHeight / imgH, 2)
+})
+
+const stageStyle = computed(() => {
+  const { w: imgW, h: imgH } = logicalSize.value
+  if (!imgW || !imgH) return {}
+  return { aspectRatio: `${imgW} / ${imgH}` }
+})
+
+const overlaySize = computed(() => {
+  if (displaySize.value.w > 0 && displaySize.value.h > 0) {
+    return displaySize.value
   }
-  image.src = props.imageUrl
+  const scale = displayScale.value
+  const { w: imgW, h: imgH } = logicalSize.value
+  return {
+    w: Math.max(1, Math.round(imgW * scale)),
+    h: Math.max(1, Math.round(imgH * scale)),
+  }
+})
+
+function syncDisplaySize() {
+  const img = bgImgRef.value
+  if (!img) return
+  const w = img.clientWidth
+  const h = img.clientHeight
+  if (w > 0 && h > 0) {
+    displaySize.value = { w: Math.round(w), h: Math.round(h) }
+  }
 }
 
-function drawCanvas() {
+function onBgLoad() {
+  bgReady.value = true
+  if (wrapRef.value?.clientWidth) {
+    containerWidth.value = wrapRef.value.clientWidth
+  }
+  nextTick(() => {
+    syncDisplaySize()
+    drawOverlay()
+  })
+}
+
+function onBgError() {
+  bgReady.value = false
+}
+
+function gridRectOnCanvas(
+  grid: FacadeGrid,
+  imgW: number,
+  imgH: number,
+  wallW: number,
+  wallH: number,
+  scale: number,
+) {
+  const gw = (grid.widthM / wallW) * imgW * scale
+  const gh = (grid.heightM / wallH) * imgH * scale
+  const x = (grid.xM / wallW) * imgW * scale
+  // 工程坐标原点在左下，Canvas 原点在左上
+  const y = ((wallH - grid.yM - grid.heightM) / wallH) * imgH * scale
+  return { x, y, w: gw, h: gh }
+}
+
+function drawOverlay() {
   const canvas = canvasRef.value
-  const image = imageObj.value
-  if (!canvas || !image) return
+  if (!canvas || !bgReady.value) return
+
+  syncDisplaySize()
+  const w = overlaySize.value.w
+  const h = overlaySize.value.h
+  if (w <= 0 || h <= 0) return
+
+  canvas.width = w
+  canvas.height = h
 
   const ctx = canvas.getContext('2d')
   if (!ctx) return
 
-  const scale = displayScale.value
-  const canvasWidth = props.imageWidth * scale
-  const canvasHeight = props.imageHeight * scale
+  ctx.clearRect(0, 0, w, h)
 
-  canvas.width = canvasWidth
-  canvas.height = canvasHeight
+  const scale = w / logicalSize.value.w
+  const wallW = props.wallWidthM > 0 ? props.wallWidthM : 1
+  const wallH = props.wallHeightM > 0 ? props.wallHeightM : 1
+  const { w: imgW, h: imgH } = logicalSize.value
 
-  ctx.clearRect(0, 0, canvasWidth, canvasHeight)
-  ctx.drawImage(image, 0, 0, canvasWidth, canvasHeight)
-
-  drawHeatmap(ctx, scale)
-  drawGridLines(ctx, scale)
-  drawDetectionBoxes(ctx, scale)
-}
-
-function getHeatmapColor(intensity: number): string {
-  if (!intensity || intensity <= 0) return 'rgba(0, 0, 0, 0)'
-  const r = Math.round(50 + intensity * 205)
-  const g = Math.round(205 - intensity * 180)
-  const b = Math.round(50 + intensity * 50)
-  const alpha = Math.min(0.75, 0.15 + intensity * 0.60)
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
-}
-
-function getHeatmapBorderColor(intensity: number): string {
-  if (!intensity || intensity <= 0) return 'rgba(255, 255, 255, 0.3)'
-  if (intensity < 0.3) return 'rgba(100, 220, 100, 0.6)'
-  if (intensity < 0.6) return 'rgba(255, 200, 50, 0.7)'
-  if (intensity < 0.8) return 'rgba(255, 120, 50, 0.8)'
-  return 'rgba(220, 50, 50, 0.9)'
-}
-
-function drawHeatmap(ctx: CanvasRenderingContext2D, scale: number) {
   props.grids.forEach(grid => {
-    if (!grid.intensity || grid.intensity <= 0) return
-
-    const x = (grid.xM / props.wallWidthM) * props.imageWidth * scale
-    const y = (grid.yM / props.wallHeightM) * props.imageHeight * scale
-    const w = (grid.widthM / props.wallWidthM) * props.imageWidth * scale
-    const h = (grid.heightM / props.wallHeightM) * props.imageHeight * scale
-
-    ctx.fillStyle = getHeatmapColor(grid.intensity)
-    ctx.fillRect(x, y, w, h)
+    if (grid.intensity > 0 && grid.totalCount > 0) {
+      const { x, y, w: gw, h: gh } = gridRectOnCanvas(grid, imgW, imgH, wallW, wallH, scale)
+      ctx.fillStyle = getIntensityColor(grid.intensity)
+      ctx.fillRect(x, y, gw, gh)
+    }
   })
-}
 
-function drawGridLines(ctx: CanvasRenderingContext2D, scale: number) {
+  // 统一绘制网格线（避免逐格描边导致虚线重叠变粗）
+  const xLines = new Set<number>()
+  const yLines = new Set<number>()
+  let minY = Infinity
+  let maxY = -Infinity
+  props.grids.forEach(grid => {
+    const { x, y, w: gw, h: gh } = gridRectOnCanvas(grid, imgW, imgH, wallW, wallH, scale)
+    xLines.add(Math.round(x))
+    xLines.add(Math.round(x + gw))
+    yLines.add(Math.round(y))
+    yLines.add(Math.round(y + gh))
+    minY = Math.min(minY, y)
+    maxY = Math.max(maxY, y + gh)
+  })
+
   ctx.save()
-  ctx.lineWidth = Math.max(1.5, Math.min(2.5, 1.5 / scale))
+  ctx.setLineDash([])
+  ctx.lineWidth = 1
+  ctx.strokeStyle = 'rgba(100, 220, 100, 0.75)'
+  ctx.beginPath()
+  for (const x of xLines) {
+    ctx.moveTo(x + 0.5, minY)
+    ctx.lineTo(x + 0.5, maxY)
+  }
+  for (const y of yLines) {
+    ctx.moveTo(Math.min(...xLines), y + 0.5)
+    ctx.lineTo(Math.max(...xLines), y + 0.5)
+  }
+  ctx.stroke()
 
   props.grids.forEach(grid => {
-    const x = (grid.xM / props.wallWidthM) * props.imageWidth * scale
-    const y = (grid.yM / props.wallHeightM) * props.imageHeight * scale
-    const w = (grid.widthM / props.wallWidthM) * props.imageWidth * scale
-    const h = (grid.heightM / props.wallHeightM) * props.imageHeight * scale
+    const { x, y, w: gw, h: gh } = gridRectOnCanvas(grid, imgW, imgH, wallW, wallH, scale)
 
-    ctx.strokeStyle = getHeatmapBorderColor(grid.intensity)
-    ctx.strokeRect(x, y, w, h)
-
-    if (w > 40 * scale && h > 25 * scale) {
-      ctx.fillStyle = grid.intensity > 0
-        ? `rgba(255, 255, 255, ${Math.min(0.95, 0.4 + grid.intensity * 0.55)})`
-        : 'rgba(255, 255, 255, 0.5)'
-      const fontSize = Math.max(10, Math.min(14, 12 * scale))
+    if (gw > 28 && gh > 18) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.88)'
+      const fontSize = Math.max(9, Math.min(13, 11 * scale))
       ctx.font = `bold ${fontSize}px sans-serif`
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      ctx.fillText(grid.gridId, x + w / 2, y + h / 2)
+      ctx.fillText(grid.gridId, x + gw / 2, y + gh / 2)
 
-      if (grid.totalCount > 0 && h > 35 * scale) {
-        const subFontSize = Math.max(8, Math.min(11, 9 * scale))
-        ctx.font = `${subFontSize}px sans-serif`
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.75)'
-        ctx.fillText(`${grid.totalCount}处`, x + w / 2, y + h / 2 + fontSize * 0.9)
+      if (grid.totalCount > 0 && gh > 30) {
+        ctx.font = `${Math.max(8, fontSize - 2)}px sans-serif`
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.78)'
+        ctx.fillText(`${grid.totalCount}处`, x + gw / 2, y + gh / 2 + fontSize * 0.85)
       }
     }
   })
@@ -188,60 +259,12 @@ function drawGridLines(ctx: CanvasRenderingContext2D, scale: number) {
   ctx.restore()
 }
 
-const DISEASE_COLORS: Record<string, string> = {
-  '风化': '#e74c3c',
-  '泛碱': '#3498db',
-  '裂缝': '#f39c12',
-  '植物附着': '#9b59b6',
-  '缺损': '#1abc9c'
-}
-
-function drawDetectionBoxes(ctx: CanvasRenderingContext2D, scale: number) {
-  if (!props.detections || props.detections.length === 0) return
-
-  ctx.save()
-  ctx.lineWidth = Math.max(2, Math.min(4, 2 / scale))
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.45)'
-  ctx.shadowBlur = 4
-
-  props.detections.forEach(det => {
-    const bbox = det.globalBbox
-    if (!bbox || bbox.length < 4) return
-
-    const x = bbox[0] * scale
-    const y = bbox[1] * scale
-    const w = bbox[2] * scale
-    const h = bbox[3] * scale
-
-    const color = DISEASE_COLORS[det.class] || '#ffffff'
-    ctx.strokeStyle = color
-    if (det.globalPolygon && det.globalPolygon.length >= 3) {
-      ctx.beginPath()
-      det.globalPolygon.forEach((point, index) => {
-        const px = point.x * scale
-        const py = point.y * scale
-        if (index === 0) ctx.moveTo(px, py)
-        else ctx.lineTo(px, py)
-      })
-      ctx.closePath()
-      ctx.stroke()
-    } else {
-      ctx.strokeRect(x, y, w, h)
-    }
-
-    ctx.shadowBlur = 0
-    ctx.fillStyle = color
-    const labelY = Math.max(0, y - 18)
-    ctx.fillRect(x, labelY, Math.max(72, Math.min(w, 120)), 18)
-
-    ctx.fillStyle = '#ffffff'
-    ctx.font = '11px sans-serif'
-    const label = `${det.class} ${(det.confidence * 100).toFixed(0)}%`
-    ctx.fillText(label, x + 4, labelY + 14)
-    ctx.shadowBlur = 4
-  })
-
-  ctx.restore()
+function getIntensityColor(intensity: number): string {
+  const r = Math.round(50 + intensity * 205)
+  const g = Math.round(205 - intensity * 180)
+  const b = Math.round(50 + intensity * 50)
+  const alpha = Math.min(0.55, 0.12 + intensity * 0.42)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
 function locateGridByEvent(event: MouseEvent) {
@@ -251,22 +274,24 @@ function locateGridByEvent(event: MouseEvent) {
   const rect = canvas.getBoundingClientRect()
   const scaleX = canvas.width / rect.width
   const scaleY = canvas.height / rect.height
-
   const canvasX = (event.clientX - rect.left) * scaleX
   const canvasY = (event.clientY - rect.top) * scaleY
 
-  const imageX = canvasX / displayScale.value
-  const imageY = canvasY / displayScale.value
+  const imageX = canvasX / (canvas.width / logicalSize.value.w)
+  const imageY = canvasY / (canvas.height / logicalSize.value.h)
 
-  const wallXM = imageX / props.imageWidth * props.wallWidthM
-  const wallYM = imageY / props.imageHeight * props.wallHeightM
+  const wallW = props.wallWidthM > 0 ? props.wallWidthM : 1
+  const wallH = props.wallHeightM > 0 ? props.wallHeightM : 1
+  const { w: imgW, h: imgH } = logicalSize.value
+  const wallXM = (imageX / imgW) * wallW
+  const wallYM = ((imgH - imageY) / imgH) * wallH
 
-  return props.grids.find(grid => {
-    return wallXM >= grid.xM
-      && wallXM < grid.xM + grid.widthM
-      && wallYM >= grid.yM
-      && wallYM < grid.yM + grid.heightM
-  }) || null
+  return props.grids.find(grid =>
+    wallXM >= grid.xM
+    && wallXM < grid.xM + grid.widthM
+    && wallYM >= grid.yM
+    && wallYM < grid.yM + grid.heightM
+  ) || null
 }
 
 function handleCanvasClick(event: MouseEvent) {
@@ -278,39 +303,50 @@ function handleCanvasMove(event: MouseEvent) {
   hoverGrid.value = locateGridByEvent(event)
 }
 
+function scheduleRedraw() {
+  nextTick(() => {
+    syncDisplaySize()
+    drawOverlay()
+  })
+}
+
 watch(
-  () => [props.imageUrl, props.grids, props.detections],
-  async () => {
-    await nextTick()
-    loadImage()
+  () => [props.imageUrl, props.grids, props.wallWidthM, props.wallHeightM],
+  () => {
+    bgReady.value = false
+    scheduleRedraw()
   },
   { deep: true }
 )
 
-watch(containerWidth, () => {
-  if (imageObj.value) drawCanvas()
+watch(() => props.isAnalyzing, (analyzing) => {
+  if (!analyzing) scheduleRedraw()
 })
+
+watch(displayScale, () => scheduleRedraw())
 
 let resizeObserver: ResizeObserver | null = null
 const handleWindowResize = () => {
   if (wrapRef.value) containerWidth.value = wrapRef.value.clientWidth
+  scheduleRedraw()
 }
 
 onMounted(() => {
   if (wrapRef.value) {
     containerWidth.value = wrapRef.value.clientWidth
     if (typeof ResizeObserver !== 'undefined') {
-      resizeObserver = new ResizeObserver(entries => {
-        for (const entry of entries) {
-          containerWidth.value = entry.contentRect.width
+      resizeObserver = new ResizeObserver(() => {
+        if (wrapRef.value?.clientWidth) {
+          containerWidth.value = wrapRef.value.clientWidth
         }
+        scheduleRedraw()
       })
       resizeObserver.observe(wrapRef.value)
+      if (stageRef.value) resizeObserver.observe(stageRef.value)
     }
   }
   window.addEventListener('orientationchange', handleWindowResize)
   window.addEventListener('resize', handleWindowResize, { passive: true })
-  loadImage()
 })
 
 onBeforeUnmount(() => {
@@ -331,11 +367,39 @@ onBeforeUnmount(() => {
   -webkit-tap-highlight-color: transparent;
 }
 
-.facade-canvas {
+.facade-stage {
+  position: relative;
+  width: 100%;
+  max-height: 70vh;
+  line-height: 0;
+}
+
+.facade-bg-img {
   display: block;
   width: 100%;
+  height: auto;
+  max-height: 70vh;
+  object-fit: contain;
+  user-select: none;
+}
+
+.facade-bg-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 13px;
+}
+
+.facade-overlay-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   cursor: crosshair;
   touch-action: manipulation;
+  pointer-events: auto;
 }
 
 .grid-tooltip {
@@ -350,6 +414,43 @@ onBeforeUnmount(() => {
   line-height: 1.6;
   max-width: 60%;
   pointer-events: none;
+  z-index: 5;
+}
+
+.disease-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-top: 1px solid #e5e7eb;
+  font-size: 12px;
+  color: #475569;
+}
+
+.legend-title {
+  font-weight: 600;
+  color: #334155;
+  margin-right: 4px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  flex-shrink: 0;
+}
+
+.legend-swatch--heat {
+  background: linear-gradient(90deg, rgba(100, 220, 100, 0.3), rgba(255, 80, 80, 0.55));
 }
 
 .ai-overlay {
@@ -437,7 +538,7 @@ onBeforeUnmount(() => {
     min-height: 200px;
     border-radius: 12px;
   }
-  .facade-canvas { cursor: pointer; }
+  .facade-overlay-canvas { cursor: pointer; }
   .grid-tooltip {
     right: 8px;
     bottom: 8px;

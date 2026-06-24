@@ -7,8 +7,8 @@
         <span v-for="n in 6" :key="n" class="particle" :class="'p'+n"></span>
       </div>
       <div class="hero-content">
-        <h1>红砖墙病害智能检测系统</h1>
-        <p class="hero-sub">基于 YOLOv11 深度学习模型&ensp;·&ensp;阿里云 PAI 平台部署</p>
+        <h1>{{ SYSTEM_NAME }}</h1>
+        <p class="hero-sub">机器视觉 + YOLOv11 深度学习&ensp;·&ensp;历史工业建筑外立面病害智能诊断</p>
         <div class="hero-tags">
           <span class="htag">AI 目标检测</span>
           <span class="htag">五类病害识别</span>
@@ -34,19 +34,37 @@
     <!-- Main -->
     <main class="main-content">
 
-      <el-tabs v-model="activeMode" class="main-tabs">
-        <el-tab-pane label="单图检测" name="single">
-
       <!-- Upload Card -->
       <div class="section-card glass-card upload-card">
         <div class="card-head">
           <div class="card-title">
             <span class="card-icon blue-icon"><el-icon :size="18"><UploadFilled /></el-icon></span>
-            <span>上传检测图片</span>
+            <span>{{ activeMode === 'single' ? '上传检测图片' : '立面普查' }}</span>
           </div>
-          <el-tag v-if="selectedFile" type="success" size="small" effect="plain">已选择图片</el-tag>
+          <el-tag v-if="activeMode === 'single' && selectedFile" type="success" size="small" effect="plain">已选择图片</el-tag>
+          <el-tag v-else-if="activeMode === 'facade' && facadeFile" type="success" size="small" effect="plain">已选择影像</el-tag>
         </div>
 
+        <div class="mode-switch" role="tablist" aria-label="检测模式">
+          <button
+            type="button"
+            role="tab"
+            class="mode-btn"
+            :class="{ active: activeMode === 'single' }"
+            :aria-selected="activeMode === 'single'"
+            @click="activeMode = 'single'"
+          >单图检测</button>
+          <button
+            type="button"
+            role="tab"
+            class="mode-btn"
+            :class="{ active: activeMode === 'facade' }"
+            :aria-selected="activeMode === 'facade'"
+            @click="activeMode = 'facade'"
+          >立面普查模式</button>
+        </div>
+
+        <div v-show="activeMode === 'single'" class="mode-panel">
         <!-- 三步快速查勘指南 -->
         <ShootingGuide />
 
@@ -72,127 +90,48 @@
           </div>
         </div>
 
-        <!-- 模型参数面板 -->
-        <div class="model-params-wrap">
-          <div class="mp-toggle" @click="showModelParams = !showModelParams">
-            <el-icon><Setting /></el-icon>
-            <span>模型推理参数</span>
-            <el-tag size="small" type="info" effect="plain" class="mp-summary">
-              {{ selectedModelName }}
-              &nbsp;·&nbsp;
-              置信度 {{ modelParams.modelConf.toFixed(2) }}
-              &nbsp;·&nbsp; IoU {{ modelParams.iouThreshold.toFixed(2) }}
-              &nbsp;·&nbsp; {{ modelParams.imageSize }}px
-            </el-tag>
-            <el-icon class="mp-arrow" :class="{ open: showModelParams }"><ArrowDown /></el-icon>
-          </div>
-          <transition name="slide-down">
-            <div v-show="showModelParams" class="mp-body">
-              <div class="mp-row">
-                <div class="mp-label">
-                  <span>检测模型</span>
-                  <el-tooltip placement="top" content="选择用于本次图像处理的模型；新增模型文件放入 backend/models 后会自动出现在列表中">
-                    <el-icon class="help-icon"><QuestionFilled /></el-icon>
-                  </el-tooltip>
-                </div>
-                <div class="mp-control mp-control-select">
-                  <el-select
-                    v-model="modelParams.modelId"
-                    size="small"
-                    class="model-select"
-                    placeholder="请选择模型"
-                    :loading="modelsLoading"
-                    :disabled="availableModels.length === 0"
-                  >
-                    <el-option
-                      v-for="model in availableModels"
-                      :key="model.id"
-                      :label="`${model.name} (${model.type.toUpperCase()}, ${formatModelSize(model.size)})`"
-                      :value="model.id"
-                    >
-                      <span>{{ model.name }}</span>
-                      <el-tag v-if="model.recommended" size="small" type="success" effect="plain">推荐</el-tag>
-                      <span class="model-option-meta">{{ model.file }} · {{ formatModelSize(model.size) }}</span>
-                    </el-option>
-                  </el-select>
-                </div>
-              </div>
-              <!-- 置信度 -->
-              <div class="mp-row">
-                <div class="mp-label">
-                  <span>置信度阈值</span>
-                  <el-tooltip placement="top" content="检测框置信度低于此值将被过滤。值越低召回率越高，但误检也越多">
-                    <el-icon class="help-icon"><QuestionFilled /></el-icon>
-                  </el-tooltip>
-                </div>
-                <div class="mp-control">
-                  <el-slider
-                    v-model="modelParams.modelConf"
-                    :min="0.05" :max="0.80" :step="0.05"
-                    :marks="{ 0.1:'0.1', 0.3:'0.3', 0.5:'0.5', 0.7:'0.7' }"
-                    class="mp-slider"
-                    :format-tooltip="(v: number) => v.toFixed(2)"
-                  />
-                  <el-input-number
-                    v-model="modelParams.modelConf"
-                    :min="0.05" :max="0.80" :step="0.05" :precision="2"
-                    size="small" controls-position="right" class="mp-num"
-                  />
-                </div>
-              </div>
-              <!-- IoU -->
-              <div class="mp-row">
-                <div class="mp-label">
-                  <span>IoU 阈值</span>
-                  <el-tooltip placement="top" content="NMS 去重时交并比阈值。值越小重叠框越容易被合并">
-                    <el-icon class="help-icon"><QuestionFilled /></el-icon>
-                  </el-tooltip>
-                </div>
-                <div class="mp-control">
-                  <el-slider
-                    v-model="modelParams.iouThreshold"
-                    :min="0.10" :max="0.70" :step="0.05"
-                    :marks="{ 0.2:'0.2', 0.45:'0.45', 0.6:'0.6' }"
-                    class="mp-slider"
-                    :format-tooltip="(v: number) => v.toFixed(2)"
-                  />
-                  <el-input-number
-                    v-model="modelParams.iouThreshold"
-                    :min="0.10" :max="0.70" :step="0.05" :precision="2"
-                    size="small" controls-position="right" class="mp-num"
-                  />
-                </div>
-              </div>
-              <!-- 图像尺寸 -->
-              <div class="mp-row">
-                <div class="mp-label">
-                  <span>推理图像尺寸</span>
-                  <el-tooltip placement="top" content="输入模型前将图像缩放到此尺寸。越大精度越高，速度越慢">
-                    <el-icon class="help-icon"><QuestionFilled /></el-icon>
-                  </el-tooltip>
-                </div>
-                <div class="mp-control mp-control-select">
-                  <el-radio-group v-model="modelParams.imageSize" size="small">
-                    <el-radio-button :value="320">320</el-radio-button>
-                    <el-radio-button :value="416">416</el-radio-button>
-                    <el-radio-button :value="640">640</el-radio-button>
-                    <el-radio-button :value="1024">1024</el-radio-button>
-                    <el-radio-button :value="1280">1280</el-radio-button>
-                  </el-radio-group>
-                  <span class="size-hint">px（建议 640）</span>
-                </div>
-              </div>
-              <!-- 重置 -->
-              <div class="mp-reset">
-                <el-button
-                  size="small" plain
-                  @click="resetModelParams"
-                >
-                  恢复默认值
-                </el-button>
-              </div>
+        <!-- 检测模型（推理参数在系统设置中配置） -->
+        <div class="model-select-bar">
+          <div class="msb-head">
+            <el-icon class="msb-icon"><Cpu /></el-icon>
+            <div class="msb-titles">
+              <span class="msb-title">检测模型</span>
+              <span class="msb-sub">共两个检测版本，切换后请点击「确认应用」；推理参数在「系统设置」</span>
             </div>
-          </transition>
+          </div>
+          <div class="msb-controls">
+            <el-select
+              v-model="pendingModelId"
+              size="default"
+              class="msb-select"
+              placeholder="请选择模型"
+              :loading="modelsLoading"
+              :disabled="availableModels.length === 0"
+            >
+              <el-option
+                v-for="model in availableModels"
+                :key="model.id"
+                :label="modelDisplayLabel(model)"
+                :value="model.id"
+              >
+                <div class="model-option-row">
+                  <span class="model-option-name">{{ modelDisplayLabel(model) }}</span>
+                  <span class="model-option-badge">{{ modelDisplayBadge(model) }}</span>
+                </div>
+              </el-option>
+            </el-select>
+            <el-button
+              type="primary"
+              :disabled="!modelSelectionDirty || modelsLoading"
+              @click="confirmModelSelection"
+            >
+              确认应用
+            </el-button>
+          </div>
+          <div class="msb-status">
+            <el-tag size="small" type="success" effect="plain">当前：{{ selectedModelName }}</el-tag>
+            <el-tag v-if="modelSelectionDirty" size="small" type="warning" effect="plain">有未应用的模型变更</el-tag>
+          </div>
         </div>
 
 
@@ -213,9 +152,9 @@
               <el-icon class="upload-icon"><Upload /></el-icon>
             </div>
             <div class="upload-text">
-              将红砖墙照片拖拽到此处，或 <em>点击上传</em>
+              将外立面照片拖拽到此处，或 <em>点击上传</em>
             </div>
-            <div class="upload-tip">支持 JPG / PNG 格式，建议清晰正面照片，文件不超过 {{ MAX_FILE_MB }}MB</div>
+            <div class="upload-tip">支持 JPG / PNG 格式，建议清晰正面照片（最大 {{ singleMaxMb }}MB）</div>
             <div class="upload-formats">
               <span class="fmt-badge">JPG</span>
               <span class="fmt-badge">JPEG</span>
@@ -261,8 +200,283 @@
         </p>
         <p v-else class="progress-text">AI 模型正在分析图片，识别病害区域...</p>
         </div>
+        </div>
+
+        <div v-show="activeMode === 'facade'" class="mode-panel facade-mode">
+          <div class="facade-subhead">
+            <span>专项项目上传</span>
+            <el-tag size="small" effect="plain">支持 RC 正射影像 PNG / JPG</el-tag>
+          </div>
+          <section class="facade-upload-panel facade-upload-panel--inline">
+            <el-card shadow="never" class="facade-inner-card">
+              <template #header>
+                <div class="section-header">
+                  <span>影像与标定</span>
+                </div>
+              </template>
+
+              <el-upload
+                ref="facadeUploadRef"
+                drag
+                :auto-upload="false"
+                :limit="1"
+                :show-file-list="false"
+                accept=".jpg,.jpeg,.png"
+                :on-change="handleFacadeFileChange"
+                :on-exceed="handleFacadeExceed"
+              >
+                <div v-if="facadeFile" class="facade-file-preview">
+                  <el-icon :size="32" color="#67c23a"><CircleCheck /></el-icon>
+                  <div class="facade-file-info">
+                    <div class="facade-file-name">{{ facadeFile.name }}</div>
+                    <div class="facade-file-meta">
+                      {{ (facadeFile.size / 1024 / 1024).toFixed(2) }} MB · 点击或拖拽更换文件
+                    </div>
+                  </div>
+                </div>
+                <template v-else>
+                  <el-icon :size="40" color="#0070C0"><UploadFilled /></el-icon>
+                  <div class="el-upload__text">
+                    上传全景大图 / 正射影像（智能比例尺切片）
+                  </div>
+                </template>
+                <template #tip>
+                  <div class="el-upload__tip">
+                    支持 JPG / PNG（最大 {{ facadeMaxMb }}MB）。上传后先画线标定，再在主页视觉微调比例尺，确认后映射切片参数 C。
+                  </div>
+                </template>
+              </el-upload>
+
+              <el-form
+                :model="facadeForm"
+                :label-position="facadeFormLabelPosition"
+                :label-width="facadeFormLabelWidth"
+                class="facade-form"
+              >
+                <el-form-item label="项目名称">
+                  <el-input v-model="facadeForm.projectName" />
+                </el-form-item>
+                <el-form-item label="墙面名称">
+                  <el-input v-model="facadeForm.wallName" />
+                </el-form-item>
+                <el-form-item label="墙面实际尺寸">
+                  <div class="auto-size-display auto-size-readonly">
+                    <span class="size-item">
+                      <label>宽度</label>
+                      <span class="size-value" :class="{ pending: !calculatedWallWidth }">
+                        {{ calculatedWallWidth > 0 ? calculatedWallWidth.toFixed(2) : '—' }}
+                        <small>m</small>
+                      </span>
+                    </span>
+                    <span class="size-item">
+                      <label>高度</label>
+                      <span class="size-value" :class="{ pending: !calculatedWallHeight }">
+                        {{ calculatedWallHeight > 0 ? calculatedWallHeight.toFixed(2) : '—' }}
+                        <small>m</small>
+                      </span>
+                    </span>
+                    <span v-if="currentScalePxPerMm > 0" class="size-scale-tag">
+                      {{ currentScalePxPerMm.toFixed(4) }} px/mm
+                    </span>
+                  </div>
+                  <div class="size-hint facade-size-hint">
+                    <el-icon><InfoFilled /></el-icon>
+                    由标定比例尺与图片像素（{{ facadeImagePixelLabel }}）自动换算，无需手动填写
+                  </div>
+                </el-form-item>
+
+                <el-alert
+                  v-if="facadeFile && !facadeScaleCalibrated"
+                  type="warning"
+                  :closable="false"
+                  show-icon
+                  class="scale-calib-required-alert"
+                  title="上传后请先画线标定，再在主页对照砖块进行视觉微调，确认比例尺后才会映射 C 参数。"
+                />
+                <div v-if="facadeFile" class="scale-calibration-section">
+                  <div class="scale-calib-header">
+                    <span class="scale-calib-title">第一步 · 砖块画线标定</span>
+                    <el-tag v-if="facadeUploading" size="small" type="info">图片上传中…</el-tag>
+                    <el-tag v-else-if="facadeJobId" size="small" type="success">已上传 · {{ facadeJobId.slice(0, 8) }}</el-tag>
+                    <el-tag v-else size="small" type="warning">标定完成后将自动上传</el-tag>
+                  </div>
+                  <p class="scale-calib-desc">
+                    沿一块红砖长边画线并确定初步比例尺；关闭弹窗后，在下方对照图中砖块进行<b>视觉微调</b>，确认像素与实际尺寸一致，再映射 C。
+                  </p>
+                  <div class="scale-calib-param">
+                    <span class="scale-calib-param-label">砖块长度 A</span>
+                    <el-input-number
+                      v-model="facadeBrickParams.A"
+                      :min="100"
+                      :max="600"
+                      :step="10"
+                      :precision="0"
+                      size="small"
+                      controls-position="right"
+                    />
+                    <span class="unit-hint">mm</span>
+                  </div>
+                  <div class="scale-calib-actions">
+                    <el-button
+                      type="primary"
+                      size="small"
+                      @click="openManualScaleDialog"
+                    >
+                      <el-icon><Crop /></el-icon>&nbsp;手动砖块画线标定
+                    </el-button>
+                    <el-button
+                      v-if="manualScaleResult?.success"
+                      size="small"
+                      link
+                      type="primary"
+                      @click="openManualScaleDialog"
+                    >
+                      重新标定
+                    </el-button>
+                  </div>
+                </div>
+              </el-form>
+
+              <div v-if="facadeFile" class="facade-workspace">
+                <div
+                  v-if="manualScaleResult?.success && !facadeScaleCalibrated"
+                  class="scale-fine-tune-section"
+                >
+                  <FacadeScaleFineTune
+                    :image-file="facadeFile"
+                    :preview-image-url="facadeFileUrl"
+                    :brick-length-mm="facadeBrickParams.A"
+                    :line-pixel-length="manualScaleResult.linePixelLength"
+                    :line-start-native="manualScaleResult.lineStartNative || { x: 0, y: 0 }"
+                    :line-end-native="manualScaleResult.lineEndNative || { x: 0, y: 0 }"
+                    :base-scale-px-per-mm="manualScaleResult.baseScalePxPerMm"
+                    :zone-size-mm="facadeBrickParams.C"
+                    :overlap-mm="facadeBrickParams.D"
+                    :wall-width-m="calculatedWallWidth || facadeForm.wallWidthM"
+                    :wall-height-m="calculatedWallHeight || facadeForm.wallHeightM"
+                    :confirming="manualScaleApplying"
+                    @update:scale="onFineTunePreview"
+                    @update:frame="facadeFrame = $event"
+                    @update:image-size="(w, h) => { facadePreviewNativeW = w; facadePreviewNativeH = h }"
+                    @confirm="onFineTuneConfirmed"
+                  />
+                </div>
+
+                <template v-if="facadeScaleCalibrated">
+                  <el-alert
+                    type="success"
+                    :closable="false"
+                    show-icon
+                    class="slice-mapping-alert"
+                    :title="`比例尺已建立（${facadeActiveScale.toFixed(4)} px/mm），以下为 C 参数映射与切片预览。`"
+                  />
+
+                  <div class="slice-mapping-section">
+                    <div class="slice-mapping-header">
+                      <span class="slice-mapping-title">第二步 · 切片参数映射</span>
+                      <el-button size="small" @click="paramsDialogVisible = true">
+                        <el-icon><Setting /></el-icon>&nbsp;设置 C / D
+                      </el-button>
+                    </div>
+                    <div class="slice-mapping-rows">
+                      <div class="sm-row">
+                        <span class="sm-label">区域边长 C</span>
+                        <span class="sm-val">{{ facadeBrickParams.C }} mm → <b>{{ mappedCorePx }}</b> px</span>
+                      </div>
+                      <div class="sm-row">
+                        <span class="sm-label">裁切边长 C+2D</span>
+                        <span class="sm-val">{{ facadeBrickParams.C + 2 * facadeBrickParams.D }} mm → <b>{{ facadeAutoTilePx }}</b> px</span>
+                      </div>
+                      <div class="sm-row">
+                        <span class="sm-label">估算切片数</span>
+                        <span class="sm-val"><b>{{ facadeAutoTileCount }}</b> 块</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <FacadeAutoPreview
+                    :image-file="facadeFile"
+                    :preview-image-url="facadeFileUrl"
+                    :wall-width-m="calculatedWallWidth || facadeForm.wallWidthM"
+                    :wall-height-m="calculatedWallHeight || facadeForm.wallHeightM"
+                    :zone-size-mm="facadeBrickParams.C"
+                    :overlap-mm="facadeBrickParams.D"
+                    :scale-px-per-mm="facadeSliceScale"
+                    @update:frame="facadeFrame = $event"
+                    @update:image-size="(w, h) => { facadePreviewNativeW = w; facadePreviewNativeH = h }"
+                  />
+
+                  <div class="auto-scale-panel">
+                    <div class="asp-row" v-if="manualScaleResult?.success">
+                      <span class="asp-label">砖块标定</span>
+                      <span class="asp-val asp-blue">
+                        {{ manualScaleResult.scalePxPerMm.toFixed(4) }} px/mm
+                        <template v-if="manualScaleResult.scaleFactor && manualScaleResult.scaleFactor !== 1">
+                          （微调 {{ (manualScaleResult.scaleFactor * 100).toFixed(1) }}%）
+                        </template>
+                      </span>
+                    </div>
+                    <div class="asp-row">
+                      <span class="asp-label">当前生效比例尺</span>
+                      <span class="asp-val asp-active">{{ facadeSliceScale.toFixed(4) }} px/mm</span>
+                    </div>
+                  </div>
+                </template>
+
+                <div v-else-if="!manualScaleResult?.success" class="slice-mapping-placeholder">
+                  <el-icon><InfoFilled /></el-icon>
+                  <span>请先完成砖块画线标定，关闭弹窗后在下方进行视觉微调</span>
+                </div>
+
+              </div>
+
+              <div class="facade-actions">
+                <el-button
+                  type="primary"
+                  :loading="facadeAnalyzing"
+                  :disabled="!facadeFile || !facadeScaleCalibrated"
+                  @click="runFacadeAnalyze"
+                >
+                  <el-icon><Search /></el-icon>
+                  AI 诊断
+                </el-button>
+                <el-button
+                  v-if="facadeResult?.detections?.length"
+                  type="success"
+                  plain
+                  @click="openFacadeCoordDialog"
+                >
+                  查看病害坐标
+                </el-button>
+                <el-button
+                  v-if="facadeResult?.detections?.length"
+                  plain
+                  @click="exportFacadeCoordFile"
+                >
+                  导出坐标 TXT
+                </el-button>
+                <el-button
+                  v-if="facadeAnalyzing && facadeJobId"
+                  type="danger"
+                  plain
+                  @click="cancelFacadeAnalyze"
+                >
+                  <el-icon><CircleClose /></el-icon>
+                  终止识别
+                </el-button>
+                <el-tag v-if="facadeJobId" type="success">已上传 · 任务 {{ facadeJobId.slice(0, 8) }}</el-tag>
+                <el-tag v-else-if="facadeFile && !facadeScaleCalibrated" type="danger">待标定</el-tag>
+                <el-tag v-else-if="facadeFile" type="warning">已标定，可进行 AI 诊断</el-tag>
+              </div>
+              <div v-if="facadeAnalyzing && facadeQueueMsg" class="facade-queue-msg">
+                <el-icon><Timer /></el-icon> {{ facadeQueueMsg }}
+              </div>
+            </el-card>
+          </section>
+        </div>
       </div>
 
+      <div v-show="activeMode === 'single'" class="single-mode-results">
       <!-- Detection Results -->
       <transition name="slide-up">
         <div v-if="detectionResult" class="section-card glass-card results-card">
@@ -300,7 +514,7 @@
             <template #title>
               当前为演示模式（未连接真实模型）
             </template>
-            <span>以下结果为随机生成的演示数据，不反映上传图片的真实检测结果。请确保后端模型文件（<code>backend/models/best.pt</code>）已就位并重启服务。</span>
+            <span>以下结果为随机生成的演示数据，不反映上传图片的真实检测结果。请确保后端模型文件（<code>backend/models/brick-wall-v2.onnx</code>）已就位并重启服务。</span>
           </el-alert>
 
           <!-- 推理参数标签栏 -->
@@ -473,304 +687,35 @@
         <RepairReport v-if="reportData" :report="reportData" />
       </transition>
 
-        </el-tab-pane>
+      </div>
 
-        <el-tab-pane label="立面普查模式" name="facade">
-          <section class="facade-upload-panel">
-            <el-card>
-              <template #header>
-                <div class="section-header">
-                  <span>专项项目上传</span>
-                  <el-tag>支持 RC 正射影像 TIFF / JPG</el-tag>
-                </div>
-              </template>
-
-              <el-upload
-                ref="facadeUploadRef"
-                drag
-                :auto-upload="false"
-                :limit="1"
-                :show-file-list="false"
-                                accept=".jpg,.jpeg,.png,.tif,.tiff,.webp"
-                :on-change="handleFacadeFileChange"
-                :on-exceed="handleFacadeExceed"
-              >
-                <div v-if="facadeFile" class="facade-file-preview">
-                  <el-icon :size="32" color="#67c23a"><CircleCheck /></el-icon>
-                  <div class="facade-file-info">
-                    <div class="facade-file-name">{{ facadeFile.name }}</div>
-                    <div class="facade-file-meta">
-                      {{ (facadeFile.size / 1024 / 1024).toFixed(2) }} MB · 点击或拖拽更换文件
-                    </div>
-                  </div>
-                </div>
-                <template v-else>
-                  <el-icon :size="40" color="#0070C0"><UploadFilled /></el-icon>
-                  <div class="el-upload__text">
-                    上传全景大图 / 正射影像（智能比例尺切片）
-                  </div>
-                </template>
-                <template #tip>
-                  <div class="el-upload__tip">
-                    支持 JPG / TIFF / PNG（最大 200MB）。上传后先画线标定，再在主页视觉微调比例尺，确认后映射切片参数 C。
-                  </div>
-                </template>
-              </el-upload>
-
-              <el-form
-                :model="facadeForm"
-                :label-position="facadeFormLabelPosition"
-                :label-width="facadeFormLabelWidth"
-                class="facade-form"
-              >
-                <el-form-item label="项目名称">
-                  <el-input v-model="facadeForm.projectName" />
-                </el-form-item>
-                <el-form-item label="墙面名称">
-                  <el-input v-model="facadeForm.wallName" />
-                </el-form-item>
-                <el-form-item label="墙面实际尺寸">
-                  <div class="auto-size-display auto-size-readonly">
-                    <span class="size-item">
-                      <label>宽度</label>
-                      <span class="size-value" :class="{ pending: !calculatedWallWidth }">
-                        {{ calculatedWallWidth > 0 ? calculatedWallWidth.toFixed(2) : '—' }}
-                        <small>m</small>
-                      </span>
-                    </span>
-                    <span class="size-item">
-                      <label>高度</label>
-                      <span class="size-value" :class="{ pending: !calculatedWallHeight }">
-                        {{ calculatedWallHeight > 0 ? calculatedWallHeight.toFixed(2) : '—' }}
-                        <small>m</small>
-                      </span>
-                    </span>
-                    <span v-if="currentScalePxPerMm > 0" class="size-scale-tag">
-                      {{ currentScalePxPerMm.toFixed(4) }} px/mm
-                    </span>
-                  </div>
-                  <div class="size-hint facade-size-hint">
-                    <el-icon><InfoFilled /></el-icon>
-                    由标定比例尺与图片像素（{{ facadeImagePixelLabel }}）自动换算，无需手动填写
-                  </div>
-                </el-form-item>
-
-                <!-- 比例尺标定工作区 -->
-                <el-alert
-                  v-if="facadeFile && !facadeScaleCalibrated"
-                  type="warning"
-                  :closable="false"
-                  show-icon
-                  class="scale-calib-required-alert"
-                  title="上传后请先画线标定，再在主页对照砖块进行视觉微调，确认比例尺后才会映射 C 参数。"
-                />
-                <div v-if="facadeFile" class="scale-calibration-section">
-                  <div class="scale-calib-header">
-                    <span class="scale-calib-title">第一步 · 砖块画线标定</span>
-                    <el-tag v-if="facadeUploading" size="small" type="info">图片上传中…</el-tag>
-                    <el-tag v-else-if="facadeJobId" size="small" type="success">已上传 · {{ facadeJobId.slice(0, 8) }}</el-tag>
-                    <el-tag v-else size="small" type="warning">标定完成后将自动上传</el-tag>
-                  </div>
-                  <p class="scale-calib-desc">
-                    沿一块红砖长边画线并确定初步比例尺；关闭弹窗后，在下方对照图中砖块进行<b>视觉微调</b>，确认像素与实际尺寸一致，再映射 C。
-                  </p>
-                  <div class="scale-calib-param">
-                    <span class="scale-calib-param-label">砖块长度 A</span>
-                    <el-input-number
-                      v-model="facadeBrickParams.A"
-                      :min="100"
-                      :max="600"
-                      :step="10"
-                      :precision="0"
-                      size="small"
-                      controls-position="right"
-                    />
-                    <span class="unit-hint">mm</span>
-                  </div>
-                  <div class="scale-calib-actions">
-                    <el-button
-                      type="primary"
-                      size="small"
-                      @click="openManualScaleDialog"
-                    >
-                      <el-icon><Crop /></el-icon>&nbsp;手动砖块画线标定
-                    </el-button>
-                    <el-button
-                      v-if="manualScaleResult?.success"
-                      size="small"
-                      link
-                      type="primary"
-                      @click="openManualScaleDialog"
-                    >
-                      重新标定
-                    </el-button>
-                  </div>
-                </div>
-              </el-form>
-
-              <!-- 全宽工作区：微调 / 切片映射（不受表单 max-width 限制） -->
-              <div v-if="facadeFile" class="facade-workspace">
-                <div
-                  v-if="manualScaleResult?.success && !facadeScaleCalibrated"
-                  class="scale-fine-tune-section"
-                >
-                  <FacadeScaleFineTune
-                    :image-file="facadeFile"
-                    :preview-image-url="facadeFileUrl"
-                    :brick-length-mm="facadeBrickParams.A"
-                    :line-pixel-length="manualScaleResult.linePixelLength"
-                    :line-start-native="manualScaleResult.lineStartNative || { x: 0, y: 0 }"
-                    :line-end-native="manualScaleResult.lineEndNative || { x: 0, y: 0 }"
-                    :base-scale-px-per-mm="manualScaleResult.baseScalePxPerMm"
-                    :zone-size-mm="facadeBrickParams.C"
-                    :overlap-mm="facadeBrickParams.D"
-                    :wall-width-m="calculatedWallWidth || facadeForm.wallWidthM"
-                    :wall-height-m="calculatedWallHeight || facadeForm.wallHeightM"
-                    :confirming="manualScaleApplying"
-                    @update:scale="onFineTunePreview"
-                    @update:frame="facadeFrame = $event"
-                    @update:image-size="(w, h) => { facadePreviewNativeW = w; facadePreviewNativeH = h }"
-                    @confirm="onFineTuneConfirmed"
-                  />
-                </div>
-
-                <!-- 第二步：比例尺确认后，C/D 映射与切片预览 -->
-                <template v-if="facadeScaleCalibrated">
-                  <el-alert
-                    type="success"
-                    :closable="false"
-                    show-icon
-                    class="slice-mapping-alert"
-                    :title="`比例尺已建立（${facadeActiveScale.toFixed(4)} px/mm），以下为 C 参数映射与切片预览。`"
-                  />
-
-                  <div class="slice-mapping-section">
-                    <div class="slice-mapping-header">
-                      <span class="slice-mapping-title">第二步 · 切片参数映射</span>
-                      <el-button size="small" @click="paramsDialogVisible = true">
-                        <el-icon><Setting /></el-icon>&nbsp;设置 C / D
-                      </el-button>
-                    </div>
-                    <div class="slice-mapping-rows">
-                      <div class="sm-row">
-                        <span class="sm-label">区域边长 C</span>
-                        <span class="sm-val">{{ facadeBrickParams.C }} mm → <b>{{ mappedCorePx }}</b> px</span>
-                      </div>
-                      <div class="sm-row">
-                        <span class="sm-label">裁切边长 C+2D</span>
-                        <span class="sm-val">{{ facadeBrickParams.C + 2 * facadeBrickParams.D }} mm → <b>{{ facadeAutoTilePx }}</b> px</span>
-                      </div>
-                      <div class="sm-row">
-                        <span class="sm-label">估算切片数</span>
-                        <span class="sm-val"><b>{{ facadeAutoTileCount }}</b> 块</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <FacadeAutoPreview
-                    :image-file="facadeFile"
-                    :preview-image-url="facadeFileUrl"
-                    :wall-width-m="calculatedWallWidth || facadeForm.wallWidthM"
-                    :wall-height-m="calculatedWallHeight || facadeForm.wallHeightM"
-                    :zone-size-mm="facadeBrickParams.C"
-                    :overlap-mm="facadeBrickParams.D"
-                    :scale-px-per-mm="facadeSliceScale"
-                    @update:frame="facadeFrame = $event"
-                    @update:image-size="(w, h) => { facadePreviewNativeW = w; facadePreviewNativeH = h }"
-                  />
-
-                  <!-- 比例尺与切片预览信息 -->
-                  <div class="auto-scale-panel">
-                    <div class="asp-row" v-if="manualScaleResult?.success">
-                      <span class="asp-label">砖块标定</span>
-                      <span class="asp-val asp-blue">
-                        {{ manualScaleResult.scalePxPerMm.toFixed(4) }} px/mm
-                        <template v-if="manualScaleResult.scaleFactor && manualScaleResult.scaleFactor !== 1">
-                          （微调 {{ (manualScaleResult.scaleFactor * 100).toFixed(1) }}%）
-                        </template>
-                      </span>
-                    </div>
-                    <div class="asp-row">
-                      <span class="asp-label">当前生效比例尺</span>
-                      <span class="asp-val asp-active">{{ facadeSliceScale.toFixed(4) }} px/mm</span>
-                    </div>
-                  </div>
-                </template>
-
-                <div v-else-if="!manualScaleResult?.success" class="slice-mapping-placeholder">
-                  <el-icon><InfoFilled /></el-icon>
-                  <span>请先完成砖块画线标定，关闭弹窗后在下方进行视觉微调</span>
-                </div>
-
-              </div>
-
-              <div class="facade-actions">
-                <el-button
-                  type="primary"
-                  :loading="facadeAnalyzing"
-                  :disabled="!facadeFile || !facadeScaleCalibrated"
-                  @click="runFacadeAnalyze"
-                >
-                  <el-icon><Search /></el-icon>
-                  AI 诊断
-                </el-button>
-                <el-button
-                  v-if="facadeResult?.detections?.length"
-                  type="success"
-                  plain
-                  @click="openFacadeCoordDialog"
-                >
-                  查看病害坐标
-                </el-button>
-                <el-button
-                  v-if="facadeResult?.detections?.length"
-                  plain
-                  @click="exportFacadeCoordFile"
-                >
-                  导出坐标 TXT
-                </el-button>
-                <el-button
-                  v-if="facadeAnalyzing && facadeJobId"
-                  type="danger"
-                  plain
-                  @click="cancelFacadeAnalyze"
-                >
-                  <el-icon><CircleClose /></el-icon>
-                  终止识别
-                </el-button>
-                <el-button disabled>
-                  多源碎图云端直拼（研发中）
-                </el-button>
-                <el-tag v-if="facadeJobId" type="success">已上传 · 任务 {{ facadeJobId.slice(0, 8) }}</el-tag>
-                <el-tag v-else-if="facadeFile && !facadeScaleCalibrated" type="danger">待标定</el-tag>
-                <el-tag v-else-if="facadeFile" type="warning">已标定，可进行 AI 诊断</el-tag>
-              </div>
-              <div v-if="facadeAnalyzing && facadeQueueMsg" class="facade-queue-msg">
-                <el-icon><Timer /></el-icon> {{ facadeQueueMsg }}
-              </div>
-            </el-card>
-          </section>
-
+      <div v-show="activeMode === 'facade'" class="facade-mode-results">
           <section v-if="facadeResult || facadeAnalyzing" class="facade-result-layout">
             <div class="facade-result-top">
             <div class="facade-viz-panel">
+              <div class="facade-viz-tabs">
+                <el-radio-group v-model="facadeVizTab" size="small">
+                  <el-radio-button v-if="hasFacadeTiles" value="tiles">切片拼合图</el-radio-button>
+                  <el-radio-button value="grid">网格定损图</el-radio-button>
+                </el-radio-group>
+                <span class="facade-viz-tabs-hint">网格定损图点击格子可回溯切片并查看 AI 置信度</span>
+              </div>
               <FacadeTileGridView
-                v-if="facadeResult && (facadeResult as any).tiles?.length"
+                v-if="hasFacadeTiles && facadeVizTab === 'tiles'"
                 :stitched-image-url="(facadeResult as any).stitchedImageUrl || null"
-                :stitched-width="(facadeResult as any).stitchedWidth || facadeResult.imageWidth"
-                :stitched-height="(facadeResult as any).stitchedHeight || facadeResult.imageHeight"
-                :source-image-url="facadeResult.sourceImageUrl"
+                :stitched-width="(facadeResult as any).stitchedWidth || facadeResult!.imageWidth"
+                :stitched-height="(facadeResult as any).stitchedHeight || facadeResult!.imageHeight"
+                :source-image-url="facadeResult!.sourceImageUrl"
                 :tiles="(facadeResult as any).tiles || []"
-                :detections="facadeResult.detections || []"
+                :detections="facadeResult!.detections || []"
                 :total-detections="(facadeResult as any).totalDetections || 0"
                 :failed-tiles="(facadeResult as any).failedTiles || 0"
               />
-              <!-- 回退：无切片数据时显示热图，或分析中显示进度条 -->
               <FacadeHeatmapCanvas
-                v-else
-                :image-url="facadeResult?.sourceImageUrl || facadeFileUrl"
-                :image-width="facadeResult?.imageWidth || facadeImageW"
-                :image-height="facadeResult?.imageHeight || facadeImageH"
+                v-show="facadeVizTab === 'grid' || !hasFacadeTiles"
+                :image-url="facadeGridDisplayUrl"
+                :image-width="facadeGridDisplayW"
+                :image-height="facadeGridDisplayH"
                 :wall-width-m="facadeResult?.wallWidthM || calculatedWallWidth || facadeForm.wallWidthM"
                 :wall-height-m="facadeResult?.wallHeightM || calculatedWallHeight || facadeForm.wallHeightM"
                 :grids="facadeResult?.grids || []"
@@ -778,7 +723,7 @@
                 :is-analyzing="facadeAnalyzing"
                 :progress="facadeProgress"
                 :progress-text="facadeProgressText"
-                @select-grid="selectedGrid = $event"
+                @select-grid="openGridSliceDialog"
               />
             </div>
             <aside v-if="facadeResult" class="facade-stats-panel">
@@ -794,8 +739,11 @@
             </aside>
             </div>
 
-            <!-- 独立：病害严重程度热力图 -->
-            <section v-if="facadeResult" class="facade-heatmap-output-section">
+            <!-- 独立：病害严重程度热力图（heatmap.js 温度分布） -->
+            <section
+              v-if="facadeResult && enableHeatmap"
+              class="facade-heatmap-output-section"
+            >
               <FacadeSeverityHeatmapPanel
                 :image-url="facadeResult.sourceImageUrl || facadeFileUrl"
                 :image-width="facadeResult.imageWidth || facadeImageW"
@@ -805,6 +753,7 @@
                 :crop-offset-x="(facadeResult as any).cropOffsetX || 0"
                 :crop-offset-y="(facadeResult as any).cropOffsetY || 0"
                 :detections="facadeResult.detections || []"
+                :auto-generate="enableHeatmap"
               />
             </section>
 
@@ -832,9 +781,9 @@
             v-model="gridSliceDialogVisible"
             :grid="selectedGrid"
             :tiles="facadeResult?.tiles || []"
+            :detections="facadeResult?.detections || []"
           />
-        </el-tab-pane>
-      </el-tabs>
+      </div>
 
     </main>
 
@@ -918,8 +867,8 @@
     <!-- Footer -->
     <footer class="app-footer">
       <div class="footer-inner">
-        <p>红砖墙病害智能检测系统&ensp;|&ensp;YOLOv11 + 阿里云PAI</p>
-        <p class="footer-sub">Brick Wall Disease Detection & Repair Assessment System</p>
+        <p>{{ SYSTEM_NAME }}&ensp;|&ensp;YOLOv11 机器视觉诊断</p>
+        <p class="footer-sub">{{ SYSTEM_NAME_EN }}</p>
       </div>
     </footer>
   </div>
@@ -928,9 +877,16 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick, defineAsyncComponent } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CircleClose, Crop, Search, ArrowUp, Setting } from '@element-plus/icons-vue'
-import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, manualScaleCalibration, exportFacadeCoords, getFacadeReport, getModels, getModelDefaults, api } from '../api'
+import { CircleClose, Crop, Search, ArrowUp, Cpu, Setting } from '@element-plus/icons-vue'
+import { detectDisease, generateReport as apiGenerateReport, uploadFacadePanorama, analyzeFacade, manualScaleCalibration, exportFacadeCoords, getFacadeReport, getModels, getModelDefaults, getUploadLimits, getAppConfig, api } from '../api'
 import type { DetectionResult, FacadeResult, ModelParams, AvailableModel, QueueProgress } from '../api'
+import { modelDisplayBadge, modelDisplayLabel, normalizeModelList } from '../utils/modelCatalog'
+import {
+  SYSTEM_NAME,
+  SYSTEM_NAME_EN,
+  DEFAULT_PROJECT_NAME,
+  DEFAULT_WALL_NAME,
+} from '../constants/system'
 import RepairReport from '../components/RepairReport.vue'
 import FacadeRepairReport from '../components/FacadeRepairReport.vue'
 import ShootingGuide from '../components/ShootingGuide.vue'
@@ -954,7 +910,10 @@ import { DISEASE_COLORS, diseaseColor } from '../utils/diseaseColors'
 import DetectionMaskOverlay from '../components/DetectionMaskOverlay.vue'
 
 // ==================== Constants ====================
-const MAX_FILE_MB = 10
+const singleMaxMb = ref(500)
+const facadeMaxMb = ref(2048)
+const enableHeatmap = ref(true)
+const facadeVizTab = ref<'grid' | 'tiles'>('grid')
 const ACCEPTED_TYPES = ['image/jpeg', 'image/jpg', 'image/png']
 const PROGRESS_TICK_MS = 400
 
@@ -1010,7 +969,12 @@ const modelParams = ref<ModelParams>({
 })
 const availableModels = ref<AvailableModel[]>([])
 const modelsLoading = ref(false)
-const showModelParams = ref(false)
+const pendingModelId = ref<string | undefined>(undefined)
+const modelSelectionDirty = computed(() => {
+  const active = modelParams.value.modelId || ''
+  const pending = pendingModelId.value || ''
+  return !!pending && pending !== active
+})
 // 图片质量检测结果（对应三步法指南的后端软质检）
 const imageQuality = ref<QualityResult>({
   brightness: 0,
@@ -1081,6 +1045,35 @@ function resetManualScaleState() {
   facadeScaleCalibrated.value = false
   mandatoryCalibPending.value = false
 }
+
+const hasFacadeTiles = computed(
+  () => !!((facadeResult.value as any)?.tiles?.length)
+)
+
+const facadeGridDisplayUrl = computed(() => {
+  const r = facadeResult.value as any
+  if (r?.displayImageUrl) return r.displayImageUrl
+  if (r?.sourceImageUrl) return r.sourceImageUrl
+  return facadeFileUrl.value
+})
+
+const facadeGridDisplayW = computed(() => {
+  const r = facadeResult.value as any
+  return r?.displayImageWidth || r?.imageWidth || facadeImageW.value || facadePreviewNativeW.value || 1
+})
+
+const facadeGridDisplayH = computed(() => {
+  const r = facadeResult.value as any
+  return r?.displayImageHeight || r?.imageHeight || facadeImageH.value || facadePreviewNativeH.value || 1
+})
+
+watch(hasFacadeTiles, (hasTiles) => {
+  if (hasTiles) {
+    facadeVizTab.value = 'tiles'
+  } else if (facadeVizTab.value === 'tiles') {
+    facadeVizTab.value = 'grid'
+  }
+})
 
 const facadeProblemReportMeta = computed(() => ({
   projectName: facadeForm.projectName,
@@ -1212,8 +1205,8 @@ const facadeAutoTileCount = computed<number>(() => {
 })
 
 const facadeForm = reactive({
-  projectName: '静安别墅红砖病害智能检测系统',
-  wallName: '静安别墅矮墙立面',
+  projectName: DEFAULT_PROJECT_NAME,
+  wallName: DEFAULT_WALL_NAME,
   wallWidthM: 0,
   wallHeightM: 0,
   gridSizeM: 1,
@@ -1221,8 +1214,7 @@ const facadeForm = reactive({
 })
 
 const facadeUploadRef = ref<any>(null)
-const FACADE_MAX_MB = 200
-const FACADE_ACCEPTED_EXTS = ['jpg', 'jpeg', 'png', 'tif', 'tiff', 'webp']
+const FACADE_ACCEPTED_EXTS = ['jpg', 'jpeg', 'png']
 
 function validateFacadeFile(raw: File): string | null {
   if (!raw) return '未选择文件'
@@ -1230,8 +1222,8 @@ function validateFacadeFile(raw: File): string | null {
   if (!FACADE_ACCEPTED_EXTS.includes(ext)) {
     return `仅支持 ${FACADE_ACCEPTED_EXTS.join(' / ').toUpperCase()} 格式`
   }
-  if (raw.size > FACADE_MAX_MB * 1024 * 1024) {
-    return `文件过大（${(raw.size / 1024 / 1024).toFixed(1)}MB），最大支持 ${FACADE_MAX_MB}MB`
+  if (raw.size > facadeMaxMb.value * 1024 * 1024) {
+    return `文件过大（${(raw.size / 1024 / 1024).toFixed(1)}MB），最大支持 ${facadeMaxMb.value}MB`
   }
   return null
 }
@@ -1474,6 +1466,7 @@ async function runFacadeAnalyze() {
 
   try {
     facadeAnalyzing.value = true
+    facadeVizTab.value = 'grid'
     facadeProgress.value = 5
     facadeProgressText.value = 'AI 深度普查诊断中，请稍候...'
     facadeResult.value = null
@@ -1540,6 +1533,7 @@ async function runFacadeAnalyze() {
     )
     if (!result.success) throw new Error((result as any).message || 'AI 诊断失败')
     facadeResult.value = result
+    facadeVizTab.value = (result as any).tiles?.length ? 'tiles' : 'grid'
     facadeProgress.value = 100
     facadeProgressText.value = 'AI 深度普查诊断完成'
     selectedGrid.value = null
@@ -1695,7 +1689,7 @@ const efflorescenceArea = computed(() => diseaseSummary.value?.['泛碱']?.total
 const isDemo = computed(() => !!detectionResult.value?.isDemo)
 const selectedModelName = computed(() => {
   const model = availableModels.value.find(item => item.id === modelParams.value.modelId)
-  return model ? model.name : '默认模型'
+  return model ? modelDisplayLabel(model) : '默认模型'
 })
 const detectionStageStyle = computed(() => {
   if (!imageDisplay.value.width || !imageDisplay.value.height) return {}
@@ -1712,28 +1706,41 @@ function formatModelSize(size: number): string {
   return `${size}B`
 }
 
-async function resetModelParams() {
-  try {
-    const defaults = await getModelDefaults()
-    modelParams.value = {
-      modelConf:    defaults.modelConf    ?? 0.30,
-      iouThreshold: defaults.iouThreshold ?? 0.45,
-      imageSize: 640,
-      modelId: availableModels.value[0]?.id
-    }
-  } catch {
-    modelParams.value = { modelConf: 0.30, iouThreshold: 0.45, imageSize: 640, modelId: availableModels.value[0]?.id }
+async function applyInferenceDefaults(defaults?: {
+  modelConf?: number
+  iouThreshold?: number
+  inferImageSize?: number
+  modelId?: string | null
+}) {
+  if (!defaults) {
+    try { defaults = await getModelDefaults() } catch { defaults = {} }
   }
+  if (defaults.modelConf !== undefined) modelParams.value.modelConf = defaults.modelConf
+  if (defaults.iouThreshold !== undefined) modelParams.value.iouThreshold = defaults.iouThreshold
+  if (defaults.inferImageSize !== undefined) modelParams.value.imageSize = defaults.inferImageSize
+  const fallbackId = availableModels.value[0]?.id
+  const nextId = defaults.modelId || modelParams.value.modelId || fallbackId
+  if (nextId) {
+    modelParams.value.modelId = nextId
+    pendingModelId.value = nextId
+  }
+}
+
+function confirmModelSelection() {
+  if (!pendingModelId.value) {
+    ElMessage.warning('请先选择模型')
+    return
+  }
+  modelParams.value.modelId = pendingModelId.value
+  ElMessage.success(`已切换模型：${selectedModelName.value}`)
 }
 
 async function loadModels() {
   try {
     modelsLoading.value = true
     const result = await getModels()
-    availableModels.value = result.models || []
-    if (!modelParams.value.modelId && availableModels.value.length > 0) {
-      modelParams.value.modelId = availableModels.value[0].id
-    }
+    availableModels.value = normalizeModelList(result.models || [])
+    await applyInferenceDefaults()
   } catch (error: any) {
     ElMessage.warning(error.message || '模型列表加载失败')
   } finally {
@@ -1756,7 +1763,9 @@ function revokePreview() {
 // ==================== File Handlers ====================
 function validateFile(file: File): string | null {
   if (!ACCEPTED_TYPES.includes(file.type)) return '只能上传 JPG/PNG 格式的图片'
-  if (file.size / 1024 / 1024 >= MAX_FILE_MB) return `图片大小不能超过 ${MAX_FILE_MB}MB`
+  if (file.size > singleMaxMb.value * 1024 * 1024) {
+    return `图片大小不能超过 ${singleMaxMb.value}MB`
+  }
   return null
 }
 
@@ -1938,6 +1947,10 @@ async function startDetection() {
     ElMessage.warning('请先上传图片')
     return
   }
+  if (modelSelectionDirty.value) {
+    ElMessage.warning('请先点击「确认应用」使模型选择生效')
+    return
+  }
 
   // 强制提交所有 el-input-number 未确认的输入值（输入框里打了数字但未按 Enter/失焦时 v-model 尚未更新）
   ;(document.activeElement as HTMLElement)?.blur()
@@ -2029,18 +2042,31 @@ function onWindowResize() {
   resizeRaf = requestAnimationFrame(recalcImageScale)
 }
 
+async function loadUploadLimits() {
+  try {
+    const res = await getUploadLimits()
+    if (res.singleMaxMb) singleMaxMb.value = res.singleMaxMb
+    if (res.facadeMaxMb) facadeMaxMb.value = res.facadeMaxMb
+  } catch {
+    // 使用前端默认值
+  }
+}
+
+async function loadAppConfig() {
+  try {
+    const res = await getAppConfig()
+    if (res.enableHeatmap !== undefined) enableHeatmap.value = res.enableHeatmap
+  } catch {
+    enableHeatmap.value = true
+  }
+}
+
 onMounted(async () => {
   loadBrickParams()
+  await loadUploadLimits()
+  await loadAppConfig()
   // 加载模型列表
-  loadModels()
-  // 从系统设置加载默认推理参数（攮管员设置的置信度即将展示在滚块上）
-  try {
-    const defaults = await getModelDefaults()
-    if (defaults.success) {
-      modelParams.value.modelConf    = defaults.modelConf    ?? modelParams.value.modelConf
-      modelParams.value.iouThreshold = defaults.iouThreshold ?? modelParams.value.iouThreshold
-    }
-  } catch { /* 默认就用初始化值 */ }
+  await loadModels()
   window.addEventListener('resize', onWindowResize)
   window.addEventListener('scroll', onScroll, { passive: true })
 })
@@ -2081,7 +2107,7 @@ async function generateReport() {
 </script>
 
 <style scoped>
-.home { min-height:100vh; display:flex; flex-direction:column; }
+.home { min-height:100%; display:flex; flex-direction:column; margin-top:-8px; }
 
 /* ===================== TRANSITIONS ===================== */
 .slide-up-enter-active { transition: all .5s cubic-bezier(.16,1,.3,1); }
@@ -2122,7 +2148,7 @@ async function generateReport() {
 }
 .hero-content { max-width:860px; margin:0 auto; position:relative; z-index:1; padding-bottom:28px; }
 .hero-banner h1 {
-  font-size:34px; font-weight:800; letter-spacing:2px; margin-bottom:10px;
+  font-size:28px; font-weight:800; letter-spacing:1px; line-height:1.35; margin-bottom:10px;
   text-shadow:0 2px 12px rgba(0,0,0,.25);
 }
 .hero-sub { font-size:14px; opacity:.7; margin-bottom:18px; }
@@ -2173,7 +2199,9 @@ async function generateReport() {
 }
 .glass-card:hover { box-shadow:0 8px 32px rgba(0,112,192,.1), 0 1px 3px rgba(0,0,0,.04); }
 
-.main-content { max-width:1200px; width:100%; margin:0 auto; padding:28px 20px 40px; position:relative; z-index:1; flex:1; }
+.main-content { max-width:1200px; width:100%; margin:0 auto; padding:8px 20px 40px; position:relative; z-index:1; flex:1; }
+.upload-card { margin-top:0; padding-top:20px; }
+.upload-card > .card-head { margin-bottom:12px; }
 
 .card-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:20px; flex-wrap:wrap; gap:12px; }
 .card-title { display:flex; align-items:center; gap:10px; font-size:17px; font-weight:600; color:#003a66; }
@@ -2198,52 +2226,32 @@ async function generateReport() {
 .scale-inputs { display:flex; align-items:center; gap:10px; }
 .scale-unit { font-size:13px; color:#64748b; }
 
-/* ===================== MODEL PARAMS PANEL ===================== */
-.model-params-wrap {
-  border:1px solid #dde5f0; border-radius:10px; margin-bottom:16px; overflow:hidden;
-  background:#fafcff;
+/* ===================== MODEL SELECT BAR ===================== */
+.model-select-bar {
+  display:flex; flex-direction:column; gap:12px;
+  border:1px solid #dceaf5; border-radius:12px; margin-bottom:16px;
+  padding:14px 16px;
+  background:linear-gradient(135deg, #f8fbff 0%, #f2f8fd 100%);
 }
-.mp-toggle {
-  display:flex; align-items:center; gap:10px; padding:11px 16px;
-  cursor:pointer; user-select:none;
-  font-size:14px; font-weight:500; color:#003a66;
-  transition:background .18s;
+.msb-head { display:flex; align-items:flex-start; gap:10px; }
+.msb-icon { color:#0070C0; font-size:20px; margin-top:2px; }
+.msb-titles { display:flex; flex-direction:column; gap:2px; }
+.msb-title { font-size:14px; font-weight:600; color:#003a66; }
+.msb-sub { font-size:12px; color:#64748b; }
+.msb-controls {
+  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
 }
-.mp-toggle:hover { background:#f0f6ff; }
-.mp-toggle .el-icon:first-child { color:#0070C0; }
-.mp-summary { margin-left:auto; font-size:12px; }
-.mp-arrow {
-  color:#94a3b8; transition:transform .25s;
-  margin-left:4px;
+.msb-select { flex:1; min-width:220px; max-width:480px; }
+.msb-status { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.model-option-row {
+  display:flex; align-items:center; gap:8px; width:100%;
 }
-.mp-arrow.open { transform:rotate(180deg); }
-.mp-body {
-  padding:16px 20px 14px; border-top:1px solid #e8edf5;
-  background:#fff;
+.model-option-name { font-weight:600; color:#003a66; flex:1; }
+.model-option-badge {
+  margin-left:auto; font-size:11px; font-weight:700; letter-spacing:.5px;
+  color:#0070c0; background:#e8f4fc; border:1px solid rgba(0,112,192,.15);
+  padding:2px 8px; border-radius:6px;
 }
-.mp-row {
-  display:flex; align-items:center; gap:16px; margin-bottom:18px; flex-wrap:wrap;
-}
-.mp-label {
-  width:100px; display:flex; align-items:center; gap:6px;
-  font-size:13px; color:#334155; font-weight:500; flex-shrink:0;
-}
-.mp-control {
-  flex:1; display:flex; align-items:center; gap:14px; min-width:0;
-}
-.mp-slider { flex:1; min-width:120px; }
-.mp-num { width:90px; flex-shrink:0; }
-.mp-control-select { gap:12px; flex-wrap:wrap; align-items:center; }
-.size-hint { font-size:12px; color:#94a3b8; white-space:nowrap; }
-.mp-reset { display:flex; justify-content:flex-end; margin-top:4px; }
-
-/* slide-down transition */
-.slide-down-enter-active, .slide-down-leave-active {
-  transition: max-height .28s ease, opacity .22s ease;
-  overflow: hidden;
-}
-.slide-down-enter-from, .slide-down-leave-to { max-height: 0; opacity: 0; }
-.slide-down-enter-to, .slide-down-leave-from { max-height: 400px; opacity: 1; }
 
 /* ===================== INFERENCE PARAMS BAR ===================== */
 .infer-params-bar {
@@ -2254,53 +2262,6 @@ async function generateReport() {
 }
 .infer-params-bar .el-tag { font-size:12px; }
 .ip-platform { color:#64748b; font-size:12px; margin-left:4px; }
-
-/* ===================== MODEL PARAMS PANEL ===================== */
-.model-params-wrap {
-  border:1px solid #dde5f0; border-radius:10px; margin-bottom:16px; overflow:hidden;
-  background:#fafcff;
-}
-.mp-toggle {
-  display:flex; align-items:center; gap:10px; padding:11px 16px;
-  cursor:pointer; user-select:none;
-  font-size:14px; font-weight:500; color:#003a66;
-  transition:background .18s;
-}
-.mp-toggle:hover { background:#f0f6ff; }
-.mp-toggle .el-icon:first-child { color:#0070C0; }
-.mp-summary { margin-left:auto; font-size:12px; }
-.mp-arrow {
-  color:#94a3b8; transition:transform .25s;
-  margin-left:4px;
-}
-.mp-arrow.open { transform:rotate(180deg); }
-.mp-body {
-  padding:16px 20px 14px; border-top:1px solid #e8edf5;
-  background:#fff;
-}
-.mp-row {
-  display:flex; align-items:center; gap:16px; margin-bottom:18px; flex-wrap:wrap;
-}
-.mp-label {
-  width:100px; display:flex; align-items:center; gap:6px;
-  font-size:13px; color:#334155; font-weight:500; flex-shrink:0;
-}
-.mp-control {
-  flex:1; display:flex; align-items:center; gap:14px; min-width:0;
-}
-.mp-slider { flex:1; min-width:120px; }
-.mp-num { width:90px; flex-shrink:0; }
-.mp-control-select { gap:12px; flex-wrap:wrap; align-items:center; }
-.size-hint { font-size:12px; color:#94a3b8; white-space:nowrap; }
-.mp-reset { display:flex; justify-content:flex-end; margin-top:4px; }
-
-/* slide-down transition */
-.slide-down-enter-active, .slide-down-leave-active {
-  transition: max-height .28s ease, opacity .22s ease;
-  overflow: hidden;
-}
-.slide-down-enter-from, .slide-down-leave-to { max-height: 0; opacity: 0; }
-.slide-down-enter-to, .slide-down-leave-from { max-height: 400px; opacity: 1; }
 
 /* ===================== AUTO SIZE DISPLAY ===================== */
 .auto-size-display {
@@ -2596,7 +2557,7 @@ async function generateReport() {
 
 .legend-bar { display:flex; justify-content:center; gap:20px; padding:14px 0 4px; flex-wrap:wrap; }
 .legend-item { display:flex; align-items:center; gap:6px; font-size:13px; color:#555; }
-.legend-dot { width:10px; height:10px; border-radius:50%; display:inline-block; box-shadow:0 0 4px rgba(0,0,0,.15); }
+.legend-dot { width:11px; height:11px; border-radius:50%; display:inline-block; border:0.5px solid rgba(0,0,0,0.8); box-shadow:0 0 4px rgba(255,255,255,0.35); }
 
 /* ===================== STAT CARDS ===================== */
 .stat-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:20px; }
@@ -2655,31 +2616,67 @@ async function generateReport() {
 /* kill any stray dots from el-upload */
 :deep(.el-upload-list__item) { display:none !important; }
 
-/* ===================== TABS ===================== */
-.main-tabs { width:100%; }
-.main-tabs :deep(.el-tabs__header) {
-  margin-bottom:20px;
-  position:sticky; top:0; z-index:10;
-  background:rgba(244,250,255,0.92);
-  backdrop-filter:blur(8px);
+/* ===================== MODE SWITCH ===================== */
+.mode-switch {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 16px;
+  background: linear-gradient(135deg, #eef6fc 0%, #e8f2fa 100%);
+  border: 1px solid rgba(0, 112, 192, 0.1);
+  border-radius: 10px;
 }
-.main-tabs :deep(.el-tabs__nav-wrap) { padding:0 8px; }
-.main-tabs :deep(.el-tabs__item) {
-  font-size:15px; font-weight:500;
-  height:48px; line-height:48px;
+.mode-btn {
+  flex: 1;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #64748b;
+  cursor: pointer;
+  transition: color 0.2s, background 0.2s, box-shadow 0.2s;
+  line-height: 1.35;
 }
-@media (max-width:768px) {
-  .main-tabs :deep(.el-tabs__header) { margin-bottom:14px; }
-  .main-tabs :deep(.el-tabs__item) {
-    font-size:14px; height:44px; line-height:44px; padding:0 14px;
-  }
-  /* 让 tab 平均分布占满宽度 */
-  .main-tabs :deep(.el-tabs__nav) {
-    display:flex; width:100%;
-  }
-  .main-tabs :deep(.el-tabs__nav .el-tabs__item) {
-    flex:1; text-align:center;
-  }
+.mode-btn:hover:not(.active) {
+  color: #0070c0;
+  background: rgba(255, 255, 255, 0.55);
+}
+.mode-btn.active {
+  color: #0070c0;
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(0, 112, 192, 0.12);
+}
+.mode-btn:focus-visible {
+  outline: 2px solid #0070c0;
+  outline-offset: 2px;
+}
+.mode-panel { min-height: 0; }
+.facade-subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #003a66;
+}
+.facade-inner-card {
+  border: 1px solid rgba(0, 112, 192, 0.08);
+  border-radius: 12px;
+  background: #fafcff;
+}
+.facade-inner-card :deep(.el-card__header) {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(0, 112, 192, 0.06);
+}
+.facade-upload-panel--inline { margin: 0; }
+@media (max-width: 768px) {
+  .mode-btn { font-size: 13px; padding: 9px 8px; }
+  .mode-switch { margin-bottom: 14px; }
 }
 
 /* ===================== FACADE ===================== */
@@ -2711,12 +2708,27 @@ async function generateReport() {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
   overflow: hidden;
 }
+.facade-viz-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef2f6;
+}
+.facade-viz-tabs-hint {
+  font-size: 12px;
+  color: #94a3b8;
+}
 .facade-stats-panel { min-width: 0; }
 .facade-heatmap-output-section {
   margin-top: 4px;
 }
 .facade-detection-panel {
   margin-top: 4px;
+  width: 100%;
 }
 
 @media (max-width: 992px) {
@@ -2739,39 +2751,12 @@ async function generateReport() {
   margin-right:6px; vertical-align:middle;
 }
 
-/* ===================== TABS ===================== */
-.main-tabs { width:100%; }
-.main-tabs :deep(.el-tabs__header) {
-  margin-bottom:20px;
-  position:sticky; top:0; z-index:10;
-  background:rgba(244,250,255,0.92);
-  backdrop-filter:blur(8px);
-}
-.main-tabs :deep(.el-tabs__nav-wrap) { padding:0 8px; }
-.main-tabs :deep(.el-tabs__item) {
-  font-size:15px; font-weight:500;
-  height:48px; line-height:48px;
-}
-@media (max-width:768px) {
-  .main-tabs :deep(.el-tabs__header) { margin-bottom:14px; }
-  .main-tabs :deep(.el-tabs__item) {
-    font-size:14px; height:44px; line-height:44px; padding:0 14px;
-  }
-  /* 让 tab 平均分布占满宽度 */
-  .main-tabs :deep(.el-tabs__nav) {
-    display:flex; width:100%;
-  }
-  .main-tabs :deep(.el-tabs__nav .el-tabs__item) {
-    flex:1; text-align:center;
-  }
-}
-
 /* ===================== RESPONSIVE ===================== */
 /* Tablet */
 @media (max-width:992px) {
   .hero-banner { padding:40px 20px 48px; }
   .hero-banner h1 { font-size:26px; }
-  .main-content { padding:20px 16px 32px; }
+  .main-content { padding:6px 16px 32px; }
   .card-head { flex-direction:column; align-items:flex-start; gap:12px; }
   .card-head-right { width:100%; justify-content:space-between; }
 }
@@ -2978,7 +2963,7 @@ async function generateReport() {
 @media (min-width:769px) and (max-width:992px) {
   .facade-result-top { grid-template-columns: 1fr; }
   .facade-actions { gap:10px; }
-  .main-content { padding:24px 18px 32px; }
+  .main-content { padding:8px 18px 32px; }
 }
 @media (-webkit-min-device-pixel-ratio: 2) and (max-width: 768px) {
   .stat-card, .disease-row, .glass-card { transition:none; }

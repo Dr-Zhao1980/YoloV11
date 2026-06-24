@@ -8,12 +8,13 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+# 荧光色配色（FPI 高对比可视化原则，与 frontend/diseaseColors.ts 一致）
 DISEASE_COLORS_RGB: Dict[str, Tuple[int, int, int]] = {
-    '裂缝': (243, 156, 18),
-    '缺损': (26, 188, 156),
-    '植物附着': (155, 89, 182),
-    '风化': (231, 76, 60),
-    '泛碱': (52, 152, 219),
+    '风化': (255, 31, 143),     # #FF1F8F 荧光品红
+    '泛碱': (0, 240, 255),      # #00F0FF 荧光青
+    '裂缝': (255, 242, 0),      # #FFF200 荧光黄
+    '植物附着': (212, 0, 255),   # #D400FF 荧光紫
+    '缺损': (0, 255, 122),      # #00FF7A 荧光绿
 }
 
 RAW_CLASS_TO_DISPLAY = {
@@ -27,8 +28,9 @@ RAW_CLASS_TO_DISPLAY = {
 ID_TO_DISPLAY = {0: '裂缝', 1: '缺损', 2: '植物附着', 3: '风化', 4: '泛碱'}
 ID_TO_RAW = {0: '01:LF', 1: '02:QS', 2: '03:P', 3: '04:B-FH', 4: '05:B-FJ'}
 
-FILL_ALPHA = 110
-STROKE_ALPHA = 240
+FILL_ALPHA = 133  # ~52% 荧光半透明
+STROKE_RGBA = (0, 0, 0, 235)
+STROKE_WIDTH = 1  # PIL 最细可靠线宽（约 1 物理像素）
 NUM_CLASSES = 5
 MASK_COEFFS = 32
 
@@ -50,7 +52,13 @@ def display_name(det: Dict[str, Any]) -> str:
 
 
 def color_rgb(det: Dict[str, Any]) -> Tuple[int, int, int]:
-    return DISEASE_COLORS_RGB.get(display_name(det), (128, 128, 128))
+    return DISEASE_COLORS_RGB.get(display_name(det), (255, 64, 129))
+
+
+def label_text_color(rgb: Tuple[int, int, int]) -> Tuple[int, int, int]:
+    r, g, b = rgb
+    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+    return (26, 26, 26) if luminance > 165 else (255, 255, 255)
 
 
 def bbox_to_xyxy(bbox: Sequence[float]) -> Tuple[int, int, int, int]:
@@ -406,7 +414,12 @@ def draw_segmentation_annotations(
         poly = ensure_polygon(d, image_rgb)
         r, g, b = color_rgb(d)
         flat = [(p[0], p[1]) for p in poly]
-        draw.polygon(flat, fill=(r, g, b, FILL_ALPHA), outline=(r, g, b, STROKE_ALPHA))
+        draw.polygon(
+            flat,
+            fill=(r, g, b, FILL_ALPHA),
+            outline=STROKE_RGBA,
+            width=STROKE_WIDTH,
+        )
 
     composed = Image.alpha_composite(base.convert('RGBA'), overlay)
     draw2 = ImageDraw.Draw(composed)
@@ -425,8 +438,9 @@ def draw_segmentation_annotations(
         except Exception:
             tw, th = len(label) * 8, 14
         ly = max(0, ly - th - 4)
-        draw2.rectangle([lx, ly, lx + tw + 6, ly + th + 4], fill=(r, g, b, 255))
-        draw2.text((lx + 3, ly + 2), label, fill=(255, 255, 255, 255), font=font)
+        draw2.rectangle([lx, ly, lx + tw + 6, ly + th + 4], fill=(r, g, b, 224))
+        tr, tg, tb = label_text_color((r, g, b))
+        draw2.text((lx + 3, ly + 2), label, fill=(tr, tg, tb, 255), font=font)
 
     base_out, ext = os.path.splitext(image_path)
     annotated_path = base_out + '_annotated' + (ext if ext else '.jpg')

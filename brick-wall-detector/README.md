@@ -1,12 +1,12 @@
-# 红砖墙病害智能检测与查勘平台
+# 基于机器视觉的历史工业建筑外立面病害智能诊断系统
 
-> **v1.3.0** · 基于 YOLOv11 的历史建筑清水砖墙病害识别、立面普查、定量统计与修缮报告 Web 系统
+> **v1.3.0** · 面向历史工业建筑外立面的 YOLOv11 病害识别、立面普查、定量统计与修缮报告 Web 系统
 
 ---
 
 ## 项目简介
 
-本系统面向历史建筑红砖外墙**现场查勘**与**整墙立面普查**，提供：
+本系统面向**历史工业建筑外立面**的现场查勘与整墙立面普查，提供：
 
 - **单图敏捷查勘**：上传墙面照片 → AI 识别五类病害 → 面积/严重程度统计 → 修缮报告
 - **立面普查模式**：正射全景图 → 比例尺校准 → 网格切片推理 → 网格化统计 → 病害热力图 → 整墙报告
@@ -64,8 +64,11 @@ cp .env.example .env
 
 # 3. Python 推理依赖 + 模型（置于 backend/models/）
 pip install -r backend/requirements.txt
-#    best.onnx  — YOLO11-seg（推荐，实例分割掩膜）
-#    best.pt    — PyTorch（需 ultralytics）
+#    brick-wall-v1.onnx  — 第一版 ONNX 实例分割
+#    brick-wall-v2.pt    — 第二版 PyTorch 源权重（将训练产出的 Plus.pt 放入并重命名）
+#    导出第二版 ONNX（推荐，无需 ultralytics 运行时依赖）：
+python backend/export_onnx.py
+#    → 生成 brick-wall-v2.onnx（默认推荐模型）
 
 # 4. 安装与构建
 npm install
@@ -104,7 +107,9 @@ npm run dev:client
 | `SILICONFLOW_*` | 可选，AI 分析报告 / 对话 |
 | `PAI_LLM_*` | 可选，优先于 SiliconFlow |
 
-**推理优先级：** 本地 `backend/models/best.onnx` 或 `best.pt` →（若配置）PAI-EAS → 未配置模型时单图可能进入演示逻辑（立面任务需真实模型）。
+**模型命名：** `brick-wall-v1.onnx`（第一版）、`brick-wall-v2.onnx`（第二版，推荐）。旧名 `best.onnx` / `Plus.pt` 已自动映射。
+
+**推理优先级：** 本地 ONNX / PyTorch 模型 →（若配置）PAI-EAS → 未配置模型时单图可能进入演示逻辑（立面任务需真实模型）。
 
 ---
 
@@ -134,7 +139,9 @@ brick-wall-detector/
 │   ├── server.js                   # Express 主服务
 │   ├── auth.js
 │   ├── run_inference.py            # YOLO 子进程推理
-│   ├── models/                     # 放置 best.onnx / best.pt（git 可选 LFS）
+│   ├── models/                     # brick-wall-v1.onnx / brick-wall-v2.onnx（git 可选 LFS）
+│   ├── model_registry.js           # 模型元数据与别名
+│   ├── export_onnx.py              # PT → ONNX 导出
 │   ├── data/                       # 用户、历史、立面任务 JSON（运行时）
 │   └── uploads/                    # 上传图片（运行时，已 gitignore）
 └── dist/                           # npm run build 产物
@@ -176,7 +183,7 @@ brick-wall-detector/
 必须在 `brick-wall-detector` 目录下执行，不是仓库根目录 `YoloV11`。
 
 **Q: 标注图仍是矩形？**  
-确认已安装 `opencv-python-headless`（`pip install -r backend/requirements.txt`），并使用 **best.onnx（seg）** 或 **best.pt**；重启服务后重新检测。
+确认已安装 `opencv-python-headless`（`pip install -r backend/requirements.txt`），推荐导出并使用 **brick-wall-v2.onnx**；若仅用 `.pt` 需安装 `ultralytics`+`torch`。重启服务后重新检测。
 
 **Q: 立面热力图与底图错位？**  
 请使用 v1.3.0+：叠加图基于无标注 `sourceImageUrl`，坐标已按 `cropOffset` 换算至分析区；重新点击「生成热力图」。

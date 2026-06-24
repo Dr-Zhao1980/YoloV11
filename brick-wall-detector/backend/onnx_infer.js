@@ -2,7 +2,7 @@
  * YOLOv11 ONNX 推理模块（纯 Node.js，无需 Python）
  * 依赖: onnxruntime-node, sharp
  *
- * 使用前需先运行 export_onnx.py 生成 best.onnx
+ * 使用前需先运行 export_onnx.py 从 brick-wall-v2.pt（Plus.pt）导出 ONNX
  */
 import path from 'path';
 import fs from 'fs';
@@ -13,7 +13,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const MODEL_PATH = process.env.YOLO_ONNX_PATH ||
-  path.join(__dirname, 'models', 'best.onnx');
+  path.join(__dirname, 'models', 'brick-wall-v2.onnx');
 
 let ort = null;
 let session = null;

@@ -97,6 +97,7 @@ import {
   PIXEL_COORD_SYSTEM_DESC,
   WALL_COORD_SYSTEM_DESC,
 } from '../utils/facadeCoordTransform'
+import { DISEASE_COLORS } from '../utils/diseaseColors'
 
 const props = defineProps<{
   visible: boolean
@@ -110,14 +111,6 @@ defineEmits<{
   'update:visible': [value: boolean]
   export: []
 }>()
-
-const DISEASE_COLORS: Record<string, string> = {
-  '风化': '#e74c3c',
-  '泛碱': '#3498db',
-  '裂缝': '#f39c12',
-  '植物附着': '#9b59b6',
-  '缺损': '#1abc9c',
-}
 
 const coordMeta = computed(() => props.coordMeta || {})
 const hasRealCoord = computed(() => hasValidCoordTransform(coordMeta.value))

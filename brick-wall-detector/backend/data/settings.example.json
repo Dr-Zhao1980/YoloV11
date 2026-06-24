@@ -1,9 +1,10 @@
 {
-  "systemName": "红砖墙病害智能检测系统",
+  "systemName": "基于机器视觉的历史工业建筑外立面病害智能诊断系统",
   "systemVersion": "v1.0.0",
-  "modelVersion": "YOLOv11-BrickWall-Plus-v1.0",
+  "modelVersion": "brick-wall-v2.onnx",
   "confidenceThreshold": 0.3,
   "iouThreshold": 0.2,
+  "inferImageSize": 640,
   "enableHeatmap": true,
   "enableAutoReport": true,
   "storageType": "本地存储",

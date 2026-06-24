@@ -11,9 +11,12 @@
         :key="det.id ?? i"
         :points="polygonAttr(det)"
         :fill="diseaseFill(det.class)"
-        :stroke="diseaseColor(det.class)"
-        stroke-width="2"
+        :stroke="DISEASE_STROKE_COLOR"
+        :stroke-width="DISEASE_STROKE_WIDTH"
+        stroke-linejoin="round"
+        stroke-linecap="round"
         vector-effect="non-scaling-stroke"
+        shape-rendering="geometricPrecision"
       />
     </svg>
     <div
@@ -28,7 +31,12 @@
 </template>
 
 <script setup lang="ts">
-import { diseaseColor, diseaseFill } from '../utils/diseaseColors'
+import {
+  diseaseFill,
+  diseaseLabelTextColor,
+  DISEASE_STROKE_COLOR,
+  DISEASE_STROKE_WIDTH,
+} from '../utils/diseaseColors'
 
 export interface MaskDetection {
   id?: number
@@ -78,7 +86,9 @@ function labelStyle(det: MaskDetection) {
   return {
     left: `${lx * scaleX}px`,
     top: `${Math.max(0, ly * scaleY - 22)}px`,
-    background: diseaseColor(det.class),
+    background: diseaseFill(det.class, 0.9),
+    color: diseaseLabelTextColor(det.class),
+    border: '0.5px solid rgba(0,0,0,0.85)',
   }
 }
 </script>
@@ -104,10 +114,8 @@ function labelStyle(det: MaskDetection) {
   border-radius: 3px;
   font-size: 11px;
   font-weight: 700;
-  color: #fff;
   white-space: nowrap;
   line-height: 1.3;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   z-index: 2;
 }
 </style>

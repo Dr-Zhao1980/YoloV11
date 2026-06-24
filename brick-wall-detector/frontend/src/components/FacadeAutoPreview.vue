@@ -8,7 +8,7 @@
       </span>
       <span v-if="tileMetrics.corePx > 0" class="fap-hint">
         核心 {{ tileMetrics.corePx }}×{{ tileMetrics.corePx }} px = {{ Math.round(zoneSizeMm) }}mm 方形
-        <template v-if="overlapMm > 0"> · 裁切 {{ tileMetrics.extractPx }}px（含每侧 {{ Math.round(overlapMm) }}mm 重叠）</template>
+        <template v-if="overlapMm > 0"> · 推理裁切 {{ tileMetrics.extractPx }}px（含每侧 {{ Math.round(overlapMm) }}mm 重叠，预览按核心格显示）</template>
       </span>
       <div style="flex:1" />
       <el-button size="small" @click="fitContentFrame" :icon="Crop" plain>适配有效区域</el-button>
@@ -16,7 +16,8 @@
     </div>
 
     <!-- Interactive canvas -->
-    <div class="fap-container" ref="containerRef" :style="containerStyle">
+    <div class="fap-container" ref="containerRef">
+      <div ref="stageRef" class="fap-stage" :style="stageStyle">
       <img
         ref="imgRef"
         :src="imageUrl"
@@ -33,13 +34,13 @@
       <div class="fap-mask fap-mask-right"
         :style="{ top: p(frame.top), bottom: p(1 - frame.bottom), left: p(frame.right) }" />
 
-      <!-- Tile grid overlay (within frame, display space) -->
-      <template v-if="dispW > 0 && scaleDisplay > 0 && tileMetrics.extractPxExact > 0 && !scaleInvalid">
+      <!-- Tile grid overlay: 统一核心格（步长 C），与后端切片步长一致 -->
+      <template v-if="stageW > 0 && scaleDisplay > 0 && tileMetrics.stepPxExact > 0 && !scaleInvalid">
         <div
           v-for="(t, i) in visibleTiles"
           :key="i"
           class="fap-tile"
-          :class="{ 'fap-tile-animate': animateTiles }"
+          :class="{ 'fap-tile-edge': t.edge, 'fap-tile-animate': animateTiles }"
           :style="t.style"
         >
           <span class="fap-tile-idx">{{ t.idx }}</span>
@@ -51,7 +52,7 @@
       </template>
 
       <!-- No-scale / abnormal step hint -->
-      <div v-else-if="dispW > 0 && scaleInvalid" class="fap-hint-overlay">
+      <div v-else-if="stageW > 0 && scaleInvalid" class="fap-hint-overlay">
         {{ scaleInvalidMessage }}
       </div>
 
@@ -64,6 +65,7 @@
         :style="handleStyle(h)"
         @mousedown.prevent.stop="startDrag('frame', 0, $event, h.id)"
       />
+      </div>
     </div>
 
     <!-- Footer -->
@@ -114,13 +116,15 @@ const MIN_STEP_DISPLAY_PX = 48
 
 // ── Image ──────────────────────────────────────────────────────
 const containerRef = ref<HTMLDivElement | null>(null)
+const stageRef     = ref<HTMLDivElement | null>(null)
 const imgRef       = ref<HTMLImageElement | null>(null)
 const imageUrl     = ref('')
 const imgNW = ref(0)  // native width
 const imgNH = ref(0)  // native height
-const dispW = ref(0)  // display width
-const dispH = ref(0)  // display height
+const stageW = ref(0) // displayed image width (stage)
+const stageH = ref(0) // displayed image height (stage)
 const selfCreatedUrl = ref('')
+let resizeObserver: ResizeObserver | null = null
 
 watch(() => [props.imageFile, props.previewImageUrl], ([f, url]) => {
   if (selfCreatedUrl.value) {
@@ -135,11 +139,41 @@ watch(() => [props.imageFile, props.previewImageUrl], ([f, url]) => {
     selfCreatedUrl.value = imageUrl.value
   }
   imgNW.value = 0; imgNH.value = 0
-  dispW.value = 0; dispH.value = 0
+  stageW.value = 0; stageH.value = 0
 }, { immediate: true })
 
-function applyFrame(f: ContentBounds, emitUpdate = true) {
-  frame.value = { ...f }
+function syncStageSize() {
+  const img = imgRef.value
+  if (!img) return
+  stageW.value = img.clientWidth
+  stageH.value = img.clientHeight
+}
+
+function snapFrameToGrid(f: Frame): Frame {
+  const step = tileMetrics.value.stepPxExact
+  if (!step || !imgNW.value || !imgNH.value) return f
+
+  const leftPx = f.left * imgNW.value
+  const rightPx = f.right * imgNW.value
+  const topPx = f.top * imgNH.value
+  const bottomPx = f.bottom * imgNH.value
+  const snappedLeft = Math.floor(leftPx / step) * step / imgNW.value
+  const snappedRight = Math.min(1, Math.max(snappedLeft + MIN_FRAME, Math.ceil(rightPx / step) * step / imgNW.value))
+  const snappedTop = Math.floor(topPx / step) * step / imgNH.value
+  const snappedBottom = Math.min(1, Math.max(snappedTop + MIN_FRAME, Math.ceil(bottomPx / step) * step / imgNH.value))
+  return {
+    left: snappedLeft,
+    top: snappedTop,
+    right: snappedRight,
+    bottom: snappedBottom,
+  }
+}
+
+function applyFrame(f: ContentBounds, emitUpdate = true, snapGrid = false) {
+  const next = snapGrid && tileMetrics.value.stepPxExact > 0
+    ? snapFrameToGrid(f)
+    : { ...f }
+  frame.value = next
   if (emitUpdate) emit('update:frame', { ...frame.value })
 }
 
@@ -147,20 +181,26 @@ async function fitContentFrame() {
   const img = imgRef.value
   if (!img?.naturalWidth) return
   const bounds = await detectImageContentBounds(img)
-  applyFrame(bounds)
+  applyFrame(bounds, true, true)
 }
 
 function onLoad() {
   const img = imgRef.value!
   imgNW.value = img.naturalWidth
   imgNH.value = img.naturalHeight
-  dispW.value = img.clientWidth
-  dispH.value = img.clientHeight
+  syncStageSize()
   emit('update:imageSize', imgNW.value, imgNH.value)
+  if (resizeObserver) resizeObserver.disconnect()
+  if (typeof ResizeObserver !== 'undefined') {
+    resizeObserver = new ResizeObserver(() => syncStageSize())
+    resizeObserver.observe(img)
+  }
   void fitContentFrame()
 }
 
 onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  resizeObserver = null
   if (selfCreatedUrl.value) {
     URL.revokeObjectURL(selfCreatedUrl.value)
     selfCreatedUrl.value = ''
@@ -177,8 +217,8 @@ const scaleNative = computed<number>(() => {
 })
 
 const scaleDisplay = computed<number>(() => {
-  if (!scaleNative.value || !imgNW.value || !dispW.value) return 0
-  return scaleNative.value * (dispW.value / imgNW.value)
+  if (!scaleNative.value || !imgNW.value || !stageW.value) return 0
+  return scaleNative.value * (stageW.value / imgNW.value)
 })
 
 const scaleInvalid = computed(() => {
@@ -203,11 +243,14 @@ const tileMetrics = computed(() => {
   return computeTileMetrics(s, props.zoneSizeMm, props.overlapMm || 0)
 })
 
-const scaleToDisplay = computed(() => (imgNW.value > 0 && dispW.value > 0 ? dispW.value / imgNW.value : 1))
+const scaleToDisplay = computed(() => (imgNW.value > 0 && stageW.value > 0 ? stageW.value / imgNW.value : 1))
 
-const coreSizeDisplay = computed(() => tileMetrics.value.corePxExact * scaleToDisplay.value)
-const extractSizeDisplay = computed(() => tileMetrics.value.extractPxExact * scaleToDisplay.value)
 const stepDisplay = computed(() => tileMetrics.value.stepPxExact * scaleToDisplay.value)
+
+const stageStyle = computed(() => {
+  if (!imgNW.value || !imgNH.value) return {}
+  return { aspectRatio: `${imgNW.value} / ${imgNH.value}` }
+})
 
 // ── Frame (fraction of full image) ────────────────────────────
 interface Frame { left: number; top: number; right: number; bottom: number }
@@ -228,57 +271,55 @@ const frameStyle = computed(() => ({
 // ── Tile grid (display pixel coordinates) ─────────────────────
 const estimatedTileCount = computed<number>(() => {
   const metrics = tileMetrics.value
-  if (!metrics.stepPxExact || !metrics.extractPxExact || !dispW.value || !dispH.value) return 0
+  if (!metrics.stepPxExact || !metrics.extractPxExact || !stageW.value || !stageH.value) return 0
   const f = frame.value
   const roiW = (f.right - f.left) * imgNW.value
   const roiH = (f.bottom - f.top) * imgNH.value
   return countTilesInRegion(roiW, roiH, metrics)
 })
 
-const visibleTiles = computed<{ style: Record<string,string>; idx: number }[]>(() => {
+const visibleTiles = computed<{ style: Record<string,string>; idx: number; edge: boolean }[]>(() => {
   const step = stepDisplay.value
-  const extract = extractSizeDisplay.value
-  const core = coreSizeDisplay.value
-  if (!step || !extract || !dispW.value || !dispH.value) return []
+  if (!step || !stageW.value || !stageH.value) return []
 
   const f = frame.value
-  const x0 = f.left  * dispW.value
-  const y0 = f.top   * dispH.value
-  const x1 = f.right * dispW.value
-  const y1 = f.bottom * dispH.value
+  const x0 = f.left  * stageW.value
+  const y0 = f.top   * stageH.value
+  const x1 = f.right * stageW.value
+  const y1 = f.bottom * stageH.value
 
   const roiW = x1 - x0
   const roiH = y1 - y0
   if (roiW < 8 || roiH < 8) return []
 
-  const tiles: { style: Record<string,string>; idx: number }[] = []
+  const tiles: { style: Record<string,string>; idx: number; edge: boolean }[] = []
   let idx = 1
   let ty = y0
   while (ty < y1 - 0.5) {
+    const remainY = y1 - ty
     let tx = x0
     while (tx < x1 - 0.5) {
       if (tiles.length >= MAX_DISPLAY_TILES) return tiles
-      const w = Math.min(extract, x1 - tx)
-      const h = Math.min(extract, y1 - ty)
+      const remainX = x1 - tx
+      const w = Math.min(step, remainX)
+      const h = Math.min(step, remainY)
       if (w >= 4 && h >= 4) {
-        const pad = Math.max(0, (extract - core) / 2)
+        const edge = remainX <= step * 1.05 || remainY <= step * 1.05
         tiles.push({
           idx: idx++,
+          edge,
           style: {
             left: `${tx}px`,
             top: `${ty}px`,
             width: `${w}px`,
             height: `${h}px`,
-            boxShadow: `inset 0 0 0 2px rgba(103,194,58,0.85), inset 0 0 0 ${pad + 2}px rgba(103,194,58,0.25)`,
           },
         })
       } else {
         idx++
       }
-      const remainX = x1 - tx
       tx += remainX <= step * 1.05 ? remainX : step
     }
-    const remainY = y1 - ty
     ty += remainY <= step * 1.05 ? remainY : step
   }
   return tiles
@@ -323,20 +364,13 @@ const cursorStyle = computed(() => {
   return h ? { cursor: h.cursor } : {}
 })
 
-const containerStyle = computed(() => {
-  const base = { ...cursorStyle.value } as Record<string, string>
-  if (imgNW.value && imgNH.value)
-    base.aspectRatio = `${imgNW.value} / ${imgNH.value}`
-  return base
-})
-
 function startDrag(_type: string, _idx: number, _e: MouseEvent, handle = '') {
   dragState.value = { type: 'frame', handle }
 }
 
 function onGlobalMove(e: MouseEvent) {
-  if (!dragState.value || !containerRef.value) return
-  const rect = containerRef.value.getBoundingClientRect()
+  if (!dragState.value || !stageRef.value) return
+  const rect = stageRef.value.getBoundingClientRect()
   const fx = Math.max(0, Math.min(1, (e.clientX - rect.left)  / rect.width))
   const fy = Math.max(0, Math.min(1, (e.clientY - rect.top)   / rect.height))
   const hDesc = HANDLES.find(x => x.id === dragState.value!.handle)
@@ -351,6 +385,7 @@ function onGlobalMove(e: MouseEvent) {
 
 function onGlobalUp() {
   if (dragState.value) {
+    frame.value = snapFrameToGrid(frame.value)
     emit('update:frame', { ...frame.value })
     dragState.value = null
   }
@@ -394,6 +429,16 @@ onMounted(() => {
   border-radius: 8px;
   overflow: hidden;
   border: 2px solid #dcdfe6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fap-stage {
+  position: relative;
+  width: 100%;
+  max-height: 560px;
+  line-height: 0;
 }
 
 .fap-img {
@@ -401,7 +446,7 @@ onMounted(() => {
   width: 100%;
   height: auto;
   max-height: 560px;
-  object-fit: contain;
+  vertical-align: top;
 }
 
 /* ── Masks ── */
@@ -421,11 +466,15 @@ onMounted(() => {
 .fap-tile {
   position: absolute;
   box-sizing: border-box;
-  border: 1.5px dashed rgba(82, 196, 26, 0.70);
-  background: rgba(82, 196, 26, 0.05);
+  border: 1.5px solid rgba(82, 196, 26, 0.85);
+  background: rgba(82, 196, 26, 0.06);
   z-index: 5;
   pointer-events: none;
   overflow: hidden;
+}
+.fap-tile-edge {
+  border-style: dashed;
+  background: rgba(82, 196, 26, 0.03);
 }
 .fap-tile-animate {
   transition: left 0.15s ease, top 0.15s ease, width 0.15s ease, height 0.15s ease, box-shadow 0.15s ease;

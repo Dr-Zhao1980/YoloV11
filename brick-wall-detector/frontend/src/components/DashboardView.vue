@@ -103,6 +103,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
+import { diseaseColor } from '../utils/diseaseColors'
 
 interface Detection {
   id: number
@@ -139,18 +140,6 @@ const imgRef = ref<HTMLImageElement>()
 const heatmapRef = ref<HTMLDivElement>()
 const imgLoaded = ref(false)
 const displaySize = ref({ width: 0, height: 0 })
-
-const DISEASE_COLORS: Record<string, string> = {
-  '风化': '#e74c3c',
-  '泛碱': '#3498db',
-  '裂缝': '#f39c12',
-  '植物附着': '#9b59b6',
-  '缺损': '#1abc9c'
-}
-
-function diseaseColor(name: string): string {
-  return DISEASE_COLORS[name] || '#999'
-}
 
 function sevType(s: string) {
   return s === '重度' ? 'danger' : s === '中度' ? 'warning' : 'success'

@@ -1,7 +1,7 @@
 {
   "name": "brick-wall-detector",
   "version": "1.3.0",
-  "description": "红砖墙病害智能检测与修缮报告系统",
+  "description": "基于机器视觉的历史工业建筑外立面病害智能诊断系统",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,7 +12,8 @@
     "build": "vite build --config frontend/vite.config.ts",
     "start": "NODE_ENV=production node backend/server.js",
     "start:debug": "DEBUG_MODE=1 NODE_ENV=development node --trace-warnings backend/server.js",
-    "preview": "vite preview --config frontend/vite.config.ts"
+    "preview": "vite preview --config frontend/vite.config.ts",
+    "export:v2-onnx": "python backend/export_onnx.py brick-wall-v2.pt"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",

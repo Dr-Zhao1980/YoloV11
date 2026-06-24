@@ -124,7 +124,11 @@ import { ref, computed, onBeforeUnmount, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Picture, MagicStick, Download, Refresh } from '@element-plus/icons-vue'
 import type { SeverityDetection, HeatmapWeightMode } from '../utils/severityHeatmapRenderer'
-import { getHeatRadiusRange } from '../utils/severityHeatmapRenderer'
+import {
+  getHeatRadiusRange,
+  DEFAULT_HEAT_RADIUS,
+  DEFAULT_OVERLAY_OPACITY,
+} from '../utils/severityHeatmapRenderer'
 import { downloadBlob, reportFilename } from '../utils/reportExport'
 
 const props = defineProps<{
@@ -138,12 +142,14 @@ const props = defineProps<{
   cropOffsetX?: number
   cropOffsetY?: number
   detections: SeverityDetection[]
+  /** 诊断完成后自动生成分布热力图 */
+  autoGenerate?: boolean
 }>()
 
 const generating = ref(false)
 const weightMode = ref<HeatmapWeightMode>('confidence')
-const overlayOpacity = ref(0.5)
-const heatRadius = ref(18)
+const overlayOpacity = ref(DEFAULT_OVERLAY_OPACITY)
+const heatRadius = ref(DEFAULT_HEAT_RADIUS)
 const radiusInitialized = ref(false)
 const pureHeatmapUrl = ref('')
 const overlayHeatmapUrl = ref('')
@@ -180,7 +186,7 @@ watch(
     const ch = props.coordHeight || props.imageHeight
     if (!cw || !ch) return
     const range = getHeatRadiusRange(cw, ch)
-    heatRadius.value = Math.max(range.min, Math.min(range.max, range.suggested))
+    heatRadius.value = Math.max(range.min, Math.min(range.max, DEFAULT_HEAT_RADIUS))
     radiusInitialized.value = true
     if (hasResult.value && !generating.value) {
       void generateHeatmap()
@@ -194,6 +200,16 @@ watch([weightMode, overlayOpacity], () => {
     void generateHeatmap()
   }
 })
+
+watch(
+  () => [props.detections, props.imageUrl, props.autoGenerate] as const,
+  () => {
+    if (props.autoGenerate && canGenerate.value && !generating.value) {
+      void generateHeatmap()
+    }
+  },
+  { deep: true }
+)
 
 function onRadiusChange() {
   if (hasResult.value && !generating.value) {

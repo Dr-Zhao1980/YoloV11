@@ -4,10 +4,7 @@ import router from '@/router'
 
 const request = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
-  timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json'
-  }
+  timeout: 120000,
 })
 
 request.interceptors.request.use(
@@ -15,6 +12,10 @@ request.interceptors.request.use(
     const token = localStorage.getItem('access_token')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
+    }
+    if (config.data instanceof FormData) {
+      config.headers = config.headers || {}
+      delete config.headers['Content-Type']
     }
     return config
   },
@@ -29,6 +30,13 @@ request.interceptors.response.use(
   },
   (error) => {
     const status = error.response?.status
+    if (!error.response) {
+      const message = error.code === 'ECONNABORTED'
+        ? '请求超时，请稍后重试'
+        : '无法连接后端服务，请确认 npm start 已运行（默认端口 3080）'
+      ElMessage.error(message)
+      return Promise.reject(new Error(message))
+    }
     const message = error.response?.data?.message || error.message || '请求失败'
 
     if (status === 401) {

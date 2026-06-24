@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
+import { SYSTEM_NAME } from './system_config.js';
 
 // 简单 token 存储 (生产环境应使用 Redis/DB)
 const tokens = new Map();
@@ -12,8 +13,9 @@ const tokens = new Map();
 let dataDir;
 
 export function initAuth(app, __dirname, opts = {}) {
-  const resolveModelPath   = opts.resolveModelPath   || null;
-  const onSettingsUpdate   = opts.onSettingsUpdate   || null;
+  const resolveModelPath           = opts.resolveModelPath           || null;
+  const getModelOptionsForSettings = opts.getModelOptionsForSettings || null;
+  const onSettingsUpdate           = opts.onSettingsUpdate           || null;
   dataDir = path.join(__dirname, 'data');
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
@@ -29,10 +31,12 @@ export function initAuth(app, __dirname, opts = {}) {
   const settingsFile = path.join(dataDir, 'settings.json');
   if (!fs.existsSync(settingsFile)) {
     fs.writeFileSync(settingsFile, JSON.stringify({
-      systemName: '红砖墙病害智能检测系统',
+      systemName: SYSTEM_NAME,
       systemVersion: 'v1.0.0',
-      modelVersion: 'YOLOv11-BrickWall-v1.0',
-      confidenceThreshold: 0.35,
+      modelVersion: 'brick-wall-v2.onnx',
+      confidenceThreshold: 0.30,
+      iouThreshold: 0.45,
+      inferImageSize: 640,
       enableHeatmap: true,
       enableAutoReport: true,
       storageType: '本地存储',
@@ -402,11 +406,12 @@ export function initAuth(app, __dirname, opts = {}) {
   app.post('/api/system/settings/reset', authMiddleware, (req, res) => {
     const settingsFile = path.join(dataDir, 'settings.json');
     const defaultSettings = {
-      systemName: '红砖墙病害智能检测系统',
+      systemName: SYSTEM_NAME,
       systemVersion: 'v1.0.0',
-      modelVersion: 'YOLOv11-BrickWall-v1.0',
+      modelVersion: 'brick-wall-v2.onnx',
       confidenceThreshold: 0.30,
       iouThreshold: 0.45,
+      inferImageSize: 640,
       enableHeatmap: true,
       enableAutoReport: true,
       storageType: '本地存储',
@@ -433,32 +438,7 @@ export function initAuth(app, __dirname, opts = {}) {
   });
 
   app.get('/api/system/model-options', optionalAuth, (req, res) => {
-    const modelsDir = path.join(__dirname, 'models');
-    const supportedModelExts = new Set(['.pt', '.onnx']);
-    let modelOptions = [];
-
-    if (fs.existsSync(modelsDir)) {
-      const files = fs.readdirSync(modelsDir)
-        .filter(file => supportedModelExts.has(path.extname(file).toLowerCase()))
-        .sort((a, b) => {
-          if (a === 'best.onnx') return -1;
-          if (b === 'best.onnx') return 1;
-          if (a === 'best.pt') return -1;
-          if (b === 'best.pt') return 1;
-          if (a === 'Plus.pt') return -1;
-          if (b === 'Plus.pt') return 1;
-          return a.localeCompare(b);
-        });
-
-      modelOptions = files.map(file => {
-        const ext = path.extname(file).toLowerCase();
-        const name = path.basename(file, ext);
-        return {
-          label: `${name} (${ext.slice(1).toUpperCase()})`,
-          value: file
-        };
-      });
-    }
+    const modelOptions = getModelOptionsForSettings ? getModelOptionsForSettings() : [];
 
     res.json({
       code: 200,

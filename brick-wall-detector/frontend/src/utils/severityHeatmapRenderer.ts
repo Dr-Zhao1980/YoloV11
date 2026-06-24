@@ -15,6 +15,12 @@ export interface SeverityDetection {
 
 export type HeatmapWeightMode = 'confidence' | 'area' | 'severity'
 
+/** 默认热力点渲染半径（px） */
+export const DEFAULT_HEAT_RADIUS = 180
+
+/** 默认叠加强度（0–1） */
+export const DEFAULT_OVERLAY_OPACITY = 0.5
+
 export interface SeverityHeatmapOptions {
   maxSide?: number
   overlayOpacity?: number
@@ -195,7 +201,8 @@ function normalizePointsForHeatmap(
 }
 
 function defaultHeatRadius(w: number, h: number): number {
-  return Math.max(20, Math.min(120, Math.round(Math.min(w, h) * 0.028)))
+  const { min, max } = getHeatRadiusRange(w, h)
+  return Math.max(min, Math.min(max, DEFAULT_HEAT_RADIUS))
 }
 
 /** 根据输出画布尺寸给出半径滑动条范围（供 UI 使用） */
@@ -208,10 +215,10 @@ export function getHeatRadiusRange(imageWidth = 2048, imageHeight = 2048, maxSid
     h = Math.round(h * s)
   }
   const shortSide = Math.min(w, h)
-  const auto = defaultHeatRadius(w, h)
   const min = 4
-  const max = Math.max(96, Math.min(600, Math.round(shortSide * 0.15)))
-  const suggested = Math.max(min, Math.min(max, Math.round(auto * 0.25)))
+  const max = Math.max(DEFAULT_HEAT_RADIUS + 20, Math.min(600, Math.round(shortSide * 0.15)))
+  const auto = Math.max(min, Math.min(max, DEFAULT_HEAT_RADIUS))
+  const suggested = auto
   return { min, max, auto, suggested }
 }
 
@@ -374,7 +381,7 @@ export function renderSeverityHeatmaps(
   options: SeverityHeatmapOptions = {}
 ): SeverityHeatmapOutput {
   const maxSide = options.maxSide ?? 4096
-  const overlayOpacity = options.overlayOpacity ?? 0.5
+  const overlayOpacity = options.overlayOpacity ?? DEFAULT_OVERLAY_OPACITY
   const pureBg = options.pureBackground ?? '#0d1117'
   const weightMode = options.weightMode ?? 'confidence'
 

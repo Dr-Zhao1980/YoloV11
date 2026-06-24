@@ -11,6 +11,13 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { initAuth } from './auth.js';
 import { runInference as onnxInfer } from './onnx_infer.js';
+import { createModelRegistry } from './model_registry.js';
+import {
+  SYSTEM_NAME,
+  DEFAULT_WALL_NAME,
+  DEFAULT_FACADE_PROJECT_NAME,
+  DEFAULT_REPORT_TITLE,
+} from './system_config.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -19,6 +26,13 @@ const uuidv4 = () => randomUUID();
 dotenv.config();
 
 const PYTHON_BIN = process.env.PYTHON_BIN || 'python3';
+
+/** 上传大小上限（MB），可通过环境变量调整 */
+const SINGLE_UPLOAD_MAX_MB = Math.max(10, parseInt(process.env.SINGLE_UPLOAD_MAX_MB, 10) || 500);
+const FACADE_UPLOAD_MAX_MB = Math.max(50, parseInt(process.env.FACADE_UPLOAD_MAX_MB, 10) || 2048);
+/** 拼合大图浏览器展示最大宽度（全分辨率拼合解码极慢，默认 2400px） */
+const STITCH_DISPLAY_MAX_WIDTH = Math.max(800, parseInt(process.env.STITCH_DISPLAY_MAX_WIDTH, 10) || 2400);
+const mbToBytes = (mb) => mb * 1024 * 1024;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -75,9 +89,7 @@ app.use('/uploads', express.static(uploadsDir, {
     res.setHeader('Expires', '0');
   }
 }));
-app.use(express.static(distDir));
-
-// 运行目录初始化（基于 server.js 同级，便于在 backend/ 中持久化数据）
+// 前端静态资源在 API 路由之后挂载，避免 /api/* 被误处理
 const runtimeBase = __dirname;
 const runtimeDirs = [
   path.join(runtimeBase, 'uploads'),
@@ -91,8 +103,18 @@ runtimeDirs.forEach(dir => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
+const modelsDir = path.join(__dirname, 'models');
+const modelRegistry = createModelRegistry(modelsDir);
+const getAvailableModels = () => modelRegistry.getAvailableModels();
+const resolveModelPath = (modelId) => modelRegistry.resolveModelPath(modelId);
+const getModelOptionsForSettings = () => modelRegistry.getModelOptionsForSettings();
+
 // 初始化认证与系统管理模块
-const { authMiddleware: requireAuth, optionalAuth, addLog: logAction, addHistoryRecord } = initAuth(app, __dirname, { resolveModelPath, onSettingsUpdate: updateQueueSettings });
+const { authMiddleware: requireAuth, optionalAuth, addLog: logAction, addHistoryRecord } = initAuth(app, __dirname, {
+  resolveModelPath,
+  getModelOptionsForSettings,
+  onSettingsUpdate: updateQueueSettings,
+});
 
 // 单图上传存储（原有 /api/detect 使用）
 const singleStorage = multer.diskStorage({
@@ -102,48 +124,7 @@ const singleStorage = multer.diskStorage({
     cb(null, uniqueSuffix + path.extname(file.originalname));
   }
 });
-const upload = multer({ storage: singleStorage, limits: { fileSize: 10 * 1024 * 1024 } });
-const modelsDir = path.join(__dirname, 'models');
-const supportedModelExts = new Set(['.pt', '.onnx']);
-
-function getAvailableModels() {
-  if (!fs.existsSync(modelsDir)) return [];
-  return fs.readdirSync(modelsDir)
-    .filter(file => supportedModelExts.has(path.extname(file).toLowerCase()))
-    .sort((a, b) => {
-      if (a === 'best.pt') return -1;
-      if (b === 'best.pt') return 1;
-      if (a === 'best.onnx') return -1;
-      if (b === 'best.onnx') return 1;
-      if (a === 'Plus.pt') return -1;
-      if (b === 'Plus.pt') return 1;
-      return a.localeCompare(b);
-    })
-    .map(file => {
-      const fullPath = path.join(modelsDir, file);
-      const stat = fs.statSync(fullPath);
-      const ext = path.extname(file).toLowerCase();
-      return {
-        id: file,
-        name: path.basename(file, ext),
-        file,
-        type: ext.slice(1),
-        size: stat.size,
-        updatedAt: stat.mtime.toISOString(),
-        recommended: file === 'best.pt' || file === 'best.onnx'
-      };
-    });
-}
-
-function resolveModelPath(modelId) {
-  const available = getAvailableModels();
-  const selected = available.find(model => model.id === modelId) || available[0];
-  if (!selected) return null;
-  return {
-    ...selected,
-    path: path.join(modelsDir, selected.file)
-  };
-}
+const upload = multer({ storage: singleStorage, limits: { fileSize: mbToBytes(SINGLE_UPLOAD_MAX_MB) } });
 
 // 从 settings.json 读取系统默认置信度（管理员在系统设置页修改后即时生效）
 function getDefaultModelConf() {
@@ -162,6 +143,28 @@ function getDefaultIouThreshold() {
     const t = parseFloat(s.iouThreshold);
     return Number.isFinite(t) && t >= 0.10 && t <= 0.90 ? t : 0.45;
   } catch { return 0.45; }
+}
+
+function getDefaultInferImageSize(modelId) {
+  try {
+    const settingsPath = path.join(__dirname, 'data/settings.json');
+    const s = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    const size = parseInt(s.inferImageSize, 10);
+    const resolved = [320, 416, 640, 1024, 1280].includes(size) ? size : 640;
+    const model = resolveModelPath(modelId || s.modelVersion || s.modelId);
+    if (model?.type === 'onnx') return model.inferImgsz || 640;
+    return resolved;
+  } catch { return 640; }
+}
+
+function getDefaultModelId() {
+  try {
+    const settingsPath = path.join(__dirname, 'data/settings.json');
+    const s = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    return modelRegistry.getDefaultModelId(s.modelVersion || s.modelId);
+  } catch {
+    return modelRegistry.getDefaultModelId();
+  }
 }
 
 // ==================== 推理排队 ====================
@@ -245,9 +248,12 @@ async function runDetectTask({ filePath, filename, imagePath, brickLengthMm, sel
     const { stdout } = await execFileAsync(
       PYTHON_BIN,
       [inferScript, filePath, String(modelConf), String(iouThreshold), String(inferImgsz), selectedModel.path],
-      { timeout: 90000, maxBuffer: 1024 * 1024 * 10 }
+      { timeout: 180000, maxBuffer: 1024 * 1024 * 10 }
     );
     const localResult = JSON.parse(stdout.trim());
+    if (!localResult.success) {
+      throw new Error(localResult.message || '模型推理失败');
+    }
     if (localResult.success) {
       usedLocalModel = true;
       imageWidth  = localResult.image_width  || imageWidth;
@@ -268,6 +274,7 @@ async function runDetectTask({ filePath, filename, imagePath, brickLengthMm, sel
     if (localErr.stderr) console.error('  stderr:', String(localErr.stderr).slice(0, 800));
     if (localErr.stdout) console.error('  stdout:', String(localErr.stdout).slice(0, 400));
     if (localErr.code)   console.error('  exit code:', localErr.code);
+    if (!result) throw localErr;
   }
   if (!result) throw new Error('模型推理失败，请检查服务器日志');
   result.isDemo = false;
@@ -303,26 +310,26 @@ const panoramaStorage = multer.diskStorage({
 });
 const panoramaUpload = multer({
   storage: panoramaStorage,
-  limits: { fileSize: 200 * 1024 * 1024 },
+  limits: { fileSize: mbToBytes(FACADE_UPLOAD_MAX_MB) },
   fileFilter: (_req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/tiff', 'image/tif', 'image/webp', 'application/octet-stream'];
-    const allowedExts = ['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.webp'];
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'application/octet-stream'];
+    const allowedExts = ['.jpg', '.jpeg', '.png'];
     const ext = path.extname(file.originalname || '').toLowerCase();
     const mimeOk = allowedTypes.includes((file.mimetype || '').toLowerCase());
     const extOk = allowedExts.includes(ext);
     if (!mimeOk && !extOk) {
-      return cb(new Error('仅支持 JPG、PNG、TIFF、WEBP 格式的立面影像'));
+      return cb(new Error('仅支持 JPG、PNG 格式的立面影像'));
     }
     cb(null, true);
   }
 });
 
 const DISEASE_COLORS = {
-  '风化': '#e74c3c',
-  '泛碱': '#3498db',
-  '裂缝': '#f39c12',
-  '植物附着': '#9b59b6',
-  '缺损': '#1abc9c'
+  '风化': '#FF1F8F',
+  '泛碱': '#00F0FF',
+  '裂缝': '#FFF200',
+  '植物附着': '#D400FF',
+  '缺损': '#00FF7A'
 };
 
 const REPAIR_RECOMMENDATIONS = {
@@ -653,12 +660,37 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// \u516c\u5f00\u63a5\u53e3\uff1a\u8fd4\u56de\u7cfb\u7edf\u9ed8\u8ba4\u63a8\u7406\u53c2\u6570\uff08\u65e0\u9700\u767b\u5f55\uff09
-app.get('/api/model-defaults', (_req, res) => {
+app.get('/api/upload-limits', (_req, res) => {
   res.json({
     success: true,
-    modelConf:    getDefaultModelConf(),
-    iouThreshold: getDefaultIouThreshold()
+    singleMaxMb: SINGLE_UPLOAD_MAX_MB,
+    facadeMaxMb: FACADE_UPLOAD_MAX_MB,
+  });
+});
+
+app.get('/api/app-config', (_req, res) => {
+  try {
+    const settingsPath = path.join(__dirname, 'data/settings.json');
+    const s = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    res.json({
+      success: true,
+      enableHeatmap: s.enableHeatmap !== false,
+      enableAutoReport: s.enableAutoReport !== false,
+    });
+  } catch {
+    res.json({ success: true, enableHeatmap: true, enableAutoReport: true });
+  }
+});
+
+// 公开接口：返回系统默认推理参数（无需登录）
+app.get('/api/model-defaults', (_req, res) => {
+  const modelId = getDefaultModelId();
+  res.json({
+    success: true,
+    modelConf:      getDefaultModelConf(),
+    iouThreshold:   getDefaultIouThreshold(),
+    inferImageSize: getDefaultInferImageSize(modelId),
+    modelId,
   });
 });
 
@@ -682,8 +714,13 @@ app.post('/api/detect', optionalAuth, upload.single('image'), async (req, res) =
     ));
     console.log(`[Detect] 参数接收 conf=${modelConf}(raw="${req.body?.modelConf}") iou=${req.body?.iouThreshold} imgsz=${req.body?.imageSize}`);
     const iouThreshold = Math.max(0.10, Math.min(0.90, parseFloat(req.body.iouThreshold) || 0.45));
-    const inferImgsz = [320, 416, 640, 1024, 1280].includes(parseInt(req.body.imageSize))
-      ? parseInt(req.body.imageSize) : 640;
+    let inferImgsz = [320, 416, 640, 1024, 1280].includes(parseInt(req.body.imageSize))
+      ? parseInt(req.body.imageSize) : getDefaultInferImageSize();
+    // ONNX 导出为固定 640×640；PT 模型才支持更大推理尺寸
+    if (selectedModel.type === 'onnx' && inferImgsz !== 640) {
+      console.log(`[Detect] ONNX 模型 ${selectedModel.file} 固定 640px，已将推理尺寸 ${inferImgsz} → 640`);
+      inferImgsz = 640;
+    }
 
     // 队列检查
     const q = getInferQueue();
@@ -804,7 +841,7 @@ app.post('/api/report/generate', (req, res) => {
     const efflorescenceArea = summary?.['泛碱'] ? summary['泛碱'].totalArea : 0;
 
     const report = {
-      title: '红砖墙病害检测修缮报告',
+      title: DEFAULT_REPORT_TITLE,
       generatedAt: new Date().toISOString(),
       detectionTime: timestamp,
       imagePath,
@@ -942,11 +979,11 @@ app.post('/api/ai/analyze', async (req, res) => {
       .join('\n');
 
     let prompt = '';
-    let systemPrompt = '你是一位拥有20年经验的古建筑保护专家和结构工程师，擅长红砖墙病害诊断与修缮方案制定。请用专业但易懂的语言回答。';
+    let systemPrompt = '你是一位拥有20年经验的古建筑保护专家和结构工程师，擅长历史工业建筑外立面病害诊断与修缮方案制定。请用专业但易懂的语言回答。';
 
     switch (analysisType) {
       case 'cause':
-        prompt = `基于以下红砖墙病害检测结果，请分析可能的病害成因：
+        prompt = `基于以下历史工业建筑外立面病害检测结果，请分析可能的病害成因：
 
 检测到 ${totalDetections} 处病害：
 ${diseaseList}
@@ -961,7 +998,7 @@ ${diseaseList}
         break;
 
       case 'repair':
-        prompt = `基于以下红砖墙病害检测结果，请制定详细的修缮方案：
+        prompt = `基于以下历史工业建筑外立面病害检测结果，请制定详细的修缮方案：
 
 检测到 ${totalDetections} 处病害：
 ${diseaseList}
@@ -974,7 +1011,7 @@ ${diseaseList}
         break;
 
       case 'prevention':
-        prompt = `基于以下红砖墙病害检测结果，请提供预防性维护建议：
+        prompt = `基于以下历史工业建筑外立面病害检测结果，请提供预防性维护建议：
 
 检测到 ${totalDetections} 处病害：
 ${diseaseList}
@@ -988,7 +1025,7 @@ ${diseaseList}
 
       case 'comprehensive':
       default:
-        prompt = `请对以下红砖墙病害检测结果进行综合专业分析：
+        prompt = `请对以下历史工业建筑外立面病害检测结果进行综合专业分析：
 
 检测到 ${totalDetections} 处病害：
 ${diseaseList}
@@ -1043,7 +1080,7 @@ app.post('/api/ai/chat', async (req, res) => {
       return res.status(400).json({ success: false, message: '请输入问题' });
     }
 
-    const systemPrompt = `你是红砖墙病害智能检测系统的 AI 助手。你拥有丰富的古建筑保护、砖石结构病害诊断、修缮工艺方面的专业知识。
+    const systemPrompt = `你是「${SYSTEM_NAME}」的 AI 助手。你拥有丰富的古建筑保护、工业遗产建筑外立面病害诊断、修缮工艺方面的专业知识。
 
 ${context ? `当前检测上下文：${JSON.stringify(context)}` : ''}
 
@@ -1178,8 +1215,8 @@ function createFacadeJobRecord(params) {
   const now = new Date().toISOString();
   return {
     jobId: params.jobId,
-    projectName: params.projectName || '静安别墅红砖墙立面普查',
-    wallName: params.wallName || '静安别墅矮墙立面',
+    projectName: params.projectName || DEFAULT_FACADE_PROJECT_NAME,
+    wallName: params.wallName || DEFAULT_WALL_NAME,
     sourceImagePath: params.sourceImagePath,
     sourceImageUrl: params.sourceImageUrl,
     imageWidth: params.imageWidth,
@@ -1476,22 +1513,39 @@ async function callPaiForTile(tilePath, conf = 0.30, iou = 0.45) {
   return { detections, annotatedTilePath, annotatedTileUrl };
 }
 
-// --- 将所有标注切片拼合成一张完整的标注大图 ---
+// --- 将所有标注切片拼合成展示用标注大图（限宽，避免浏览器解码全分辨率巨图） ---
 async function stitchAnnotatedTiles(job, tiles) {
   const W = job.roiImageWidth  || job.imageWidth;
   const H = job.roiImageHeight || job.imageHeight;
   const offX = job.cropOffsetX || 0;
   const offY = job.cropOffsetY || 0;
 
-  const composites = tiles
-    .filter(t => t.annotatedTilePath && fs.existsSync(t.annotatedTilePath))
-    .map(t => ({
-      input: t.annotatedTilePath,
-      left: Math.max(0, Math.round(t.offsetX - offX)),
-      top:  Math.max(0, Math.round(t.offsetY - offY))
-    }));
+  const validTiles = tiles.filter(t => t.annotatedTilePath && fs.existsSync(t.annotatedTilePath));
+  if (validTiles.length === 0) return null;
 
-  if (composites.length === 0) return null;
+  const scale = W > STITCH_DISPLAY_MAX_WIDTH ? STITCH_DISPLAY_MAX_WIDTH / W : 1;
+  const outW = Math.max(1, Math.round(W * scale));
+  const outH = Math.max(1, Math.round(H * scale));
+
+  const composites = await Promise.all(validTiles.map(async (t) => {
+    const left = Math.max(0, Math.round((t.offsetX - offX) * scale));
+    const top = Math.max(0, Math.round((t.offsetY - offY) * scale));
+    if (scale < 1) {
+      const meta = await sharp(t.annotatedTilePath).metadata();
+      const tw = meta.width || 1;
+      const th = meta.height || 1;
+      const input = await sharp(t.annotatedTilePath)
+        .resize({
+          width: Math.max(1, Math.round(tw * scale)),
+          height: Math.max(1, Math.round(th * scale)),
+          fit: 'fill',
+        })
+        .jpeg({ quality: 84, mozjpeg: true })
+        .toBuffer();
+      return { input, left, top };
+    }
+    return { input: t.annotatedTilePath, left, top };
+  }));
 
   // 每次分析使用带时间戳的唯一文件名，防止浏览器缓存旧结果
   const tilesDir = path.join(__dirname, 'uploads/tiles');
@@ -1503,15 +1557,56 @@ async function stitchAnnotatedTiles(job, tiles) {
     }
   } catch (_) {}
   const stitchedFilename = `${job.jobId}_${Date.now()}_stitched.jpg`;
-  const stitchedPath = path.join(__dirname, 'uploads/tiles', stitchedFilename);
+  const stitchedPath = path.join(tilesDir, stitchedFilename);
 
-  await sharp({ create: { width: W, height: H, channels: 3, background: { r: 30, g: 30, b: 30 } } })
+  await sharp({ create: { width: outW, height: outH, channels: 3, background: { r: 30, g: 30, b: 30 } } })
     .composite(composites)
-    .jpeg({ quality: 88 })
+    .jpeg({ quality: 82, progressive: true, mozjpeg: true })
     .toFile(stitchedPath);
 
-  console.log(`[FacadeStitch] 拼合完成 ${W}×${H}px → ${stitchedFilename}`);
-  return { url: `/uploads/tiles/${stitchedFilename}`, width: W, height: H };
+  const fileMb = (fs.statSync(stitchedPath).size / 1024 / 1024).toFixed(2);
+  console.log(
+    `[FacadeStitch] 拼合完成 ${outW}×${outH}px (源 ${W}×${H}px, scale=${scale.toFixed(3)}, ${fileMb}MB) → ${stitchedFilename}`
+  );
+  return { url: `/uploads/tiles/${stitchedFilename}`, width: W, height: H, displayWidth: outW, displayHeight: outH };
+}
+
+// --- 生成无标注的展示底图（限宽，供网格定损图使用；始终用全图原图） ---
+async function generateFacadeDisplayImage(job) {
+  const srcPath = job.sourceImagePath;
+  if (!srcPath || !fs.existsSync(srcPath)) return null;
+
+  const W = job.imageWidth;
+  const H = job.imageHeight;
+  if (!W || !H) return null;
+
+  const scale = W > STITCH_DISPLAY_MAX_WIDTH ? STITCH_DISPLAY_MAX_WIDTH / W : 1;
+  const outW = Math.max(1, Math.round(W * scale));
+  const outH = Math.max(1, Math.round(H * scale));
+
+  const tilesDir = path.join(__dirname, 'uploads/tiles');
+  try {
+    for (const f of fs.readdirSync(tilesDir)) {
+      if (f.startsWith(`${job.jobId}_`) && f.endsWith('_display.jpg')) {
+        fs.unlinkSync(path.join(tilesDir, f));
+      }
+    }
+  } catch (_) {}
+
+  const filename = `${job.jobId}_${Date.now()}_display.jpg`;
+  const outPath = path.join(tilesDir, filename);
+  await sharp(srcPath)
+    .resize({ width: outW, height: outH, fit: 'inside', withoutEnlargement: scale >= 1 })
+    .jpeg({ quality: 85, progressive: true, mozjpeg: true })
+    .toFile(outPath);
+
+  return {
+    url: `/uploads/tiles/${filename}`,
+    width: W,
+    height: H,
+    displayWidth: outW,
+    displayHeight: outH,
+  };
 }
 
 // --- 病害类别归一化 ---
@@ -1638,10 +1733,8 @@ function buildFacadeGrid(job, detections) {
 
   detections.forEach(det => {
     const center = getDetectionCenter(det.globalBbox);
-    const imageW = job.roiImageWidth  || job.imageWidth;
-    const imageH = job.roiImageHeight || job.imageHeight;
     const centerXM = center.x * job.pixelToMeterX;
-    const centerYM = (imageH - center.y) * job.pixelToMeterY;
+    const centerYM = (job.imageHeight - center.y) * job.pixelToMeterY;
     const col = Math.floor(centerXM / job.gridSizeM);
     const blRow = Math.floor(centerYM / job.gridSizeM);
     const oldRow = rows - 1 - blRow;
@@ -2059,6 +2152,8 @@ app.post('/api/facade/analyze/:jobId', async (req, res) => {
       j.status = 'stitching'; saveFacadeJob(j);
       let stitchResult = null;
       try { stitchResult = await stitchAnnotatedTiles(j, tiles); } catch (se) { console.error('[Facade] 拼合失败（非致命）:', se.message); }
+      let displayResult = null;
+      try { displayResult = await generateFacadeDisplayImage(j); } catch (de) { console.error('[Facade] 展示底图生成失败（非致命）:', de.message); }
 
       const grids = buildFacadeGrid(j, detections);
       const summary = buildFacadeSummary(grids, detections);
@@ -2091,6 +2186,9 @@ app.post('/api/facade/analyze/:jobId', async (req, res) => {
         totalTiles: tiles.length, failedTiles, totalDetections: detections.length,
         stitchedImageUrl: stitchResult ? `${stitchResult.url}?v=${rv}` : null,
         stitchedWidth: stitchResult ? stitchedW : null, stitchedHeight: stitchResult ? stitchedH : null,
+        displayImageUrl: displayResult ? `${displayResult.url}?v=${rv}` : (j.sourceImageUrl ? `${j.sourceImageUrl}?v=${rv}` : null),
+        displayImageWidth: displayResult ? displayResult.width : j.imageWidth,
+        displayImageHeight: displayResult ? displayResult.height : j.imageHeight,
         cropOffsetX: cropOffX,
         cropOffsetY: cropOffY,
         grids, detections, summary, tiles: publicTiles,
@@ -2225,7 +2323,7 @@ app.get('/api/facade/export-coords/:jobId', (req, res) => {
 
     const coordLines = [
       '========================================',
-      '  红砖墙病害检测坐标文件 - 立面普查模式',
+      '  历史工业建筑外立面病害检测坐标文件 - 立面普查模式',
       '========================================',
       '',
       `项目名称: ${job.projectName || '立面普查'}`,
@@ -2257,10 +2355,7 @@ app.get('/api/facade/export-coords/:jobId', (req, res) => {
     );
 
     const diseaseNames = ['风化', '泛碱', '裂缝', '植物附着', '缺损'];
-    const diseaseColors = {
-      '风化': '#e74c3c', '泛碱': '#3498db', '裂缝': '#f39c12',
-      '植物附着': '#9b59b6', '缺损': '#1abc9c'
-    };
+    const diseaseColors = { ...DISEASE_COLORS };
 
     const detectionsByClass = {};
     diseaseNames.forEach(n => detectionsByClass[n] = []);
@@ -2348,7 +2443,7 @@ app.get('/api/facade/export-coords/:jobId', (req, res) => {
     coordLines.push('');
     coordLines.push('========================================');
     coordLines.push(`  文件生成时间: ${new Date().toLocaleString('zh-CN')}`);
-    coordLines.push('  红砖墙病害智能检测系统 - 立面普查模式');
+    coordLines.push(`  ${SYSTEM_NAME} - 立面普查模式`);
     coordLines.push('========================================');
 
     const coordTxtContent = coordLines.join('\n');
@@ -2547,7 +2642,7 @@ app.get('/api/facade/report/:jobId', (req, res) => {
     res.json({
       success: true,
       report: {
-        title: `${job.wallName || '红砖墙立面'}整墙修缮报告`,
+        title: `${job.wallName || '历史工业建筑外立面'}整墙修缮报告`,
         generatedAt: new Date().toISOString(),
         jobId: job.jobId,
         projectName: job.projectName,
@@ -2585,6 +2680,9 @@ app.get('/api/facade/report/:jobId', (req, res) => {
   }
 });
 
+// 生产环境静态资源（必须在 /api 路由之后注册）
+app.use(express.static(distDir));
+
 // Catch-all: serve frontend
 app.get('*', (_req, res) => {
   const entryPath = path.join(distDir, 'entry.html');
@@ -2592,7 +2690,7 @@ app.get('*', (_req, res) => {
     res.sendFile(entryPath);
   } else {
     res.status(200).send(`
-      <html><head><title>红砖墙病害检测系统</title></head>
+      <html><head><title>${SYSTEM_NAME}</title></head>
       <body style="font-family:sans-serif;text-align:center;padding:60px;">
         <h2>前端尚未构建</h2>
         <p>请运行 <code>npm run build</code> 后重新启动服务</p>
@@ -2607,7 +2705,12 @@ app.use((err, req, res, _next) => {
   console.error('Unhandled error:', err);
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(413).json({ success: false, message: '文件过大，全景图最大 200MB，单图最大 10MB' });
+      const isFacade = (req.originalUrl || '').includes('/facade/') || (req.originalUrl || '').includes('/mosaic/');
+      const maxMb = isFacade ? FACADE_UPLOAD_MAX_MB : SINGLE_UPLOAD_MAX_MB;
+      return res.status(413).json({
+        success: false,
+        message: `文件过大，当前上限 ${maxMb}MB（可在 .env 中调整 SINGLE_UPLOAD_MAX_MB / FACADE_UPLOAD_MAX_MB）`,
+      });
     }
     return res.status(400).json({ success: false, message: '上传失败：' + err.message });
   }
@@ -2620,10 +2723,11 @@ app.use((err, req, res, _next) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log('');
   console.log('═══════════════════════════════════════════════════════');
-  console.log('🧱  红砖墙病害智能检测系统 v1.0');
+  console.log(`🏭  ${SYSTEM_NAME} v1.0`);
   console.log('═══════════════════════════════════════════════════════');
   console.log(`📡  服务地址: http://0.0.0.0:${PORT}`);
   console.log(`🔗  本地访问: http://localhost:${PORT}`);
+  console.log(`📤  上传限制: 单图 ${SINGLE_UPLOAD_MAX_MB}MB · 立面普查 ${FACADE_UPLOAD_MAX_MB}MB`);
   console.log(`🐛  调试模式: ${DEBUG_MODE ? '✅ 已开启（详细请求日志）' : '⚪ 关闭'}`);
   console.log(`📂  仓库根:   ${repoRoot}`);
   console.log(`📂  服务目录: ${runtimeBase}`);

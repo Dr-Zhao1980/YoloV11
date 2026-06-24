@@ -28,7 +28,7 @@ app = Flask(__name__)
 # 模型路径 - 从环境变量或默认路径加载
 MODEL_PATH = os.environ.get(
     'YOLO_MODEL_PATH',
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models', 'best.pt')
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models', 'brick-wall-v2.pt')
 )
 
 CONFIDENCE_THRESHOLD = float(os.environ.get('YOLO_CONFIDENCE', '0.30'))

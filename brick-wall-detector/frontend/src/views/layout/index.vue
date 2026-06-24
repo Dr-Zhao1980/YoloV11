@@ -18,30 +18,18 @@
       <!-- Logo区域 -->
       <div class="aside-logo" @click="isMobile && (sideOpen = false)">
         <el-icon :size="26" color="#fff"><Monitor /></el-icon>
-        <span class="logo-text">病害检测系统</span>
-      </div>
-
-      <!-- 角色标签 -->
-      <div class="aside-role-tag">
-        <span class="role-badge" :class="isAdmin ? 'badge-admin' : 'badge-user'">
-          {{ isAdmin ? '管理员' : '普通用户' }}
-        </span>
-        <span class="role-name">{{ userInfo?.nickname || userInfo?.username }}</span>
+        <span class="logo-text">{{ SYSTEM_LOGO_LABEL }}</span>
       </div>
 
       <!-- 导航菜单 -->
       <nav class="aside-nav">
-        <!-- 检测与分析（所有用户可见） -->
-        <div class="nav-group-label">检测与分析</div>
         <router-link to="/dashboard" class="nav-item" :class="{ active: currentRoute === '/dashboard' }"
           @click="isMobile && (sideOpen = false)">
           <el-icon><HomeFilled /></el-icon>
-          <span class="nav-text">系统首页 / 检测</span>
+          <span class="nav-text">首页</span>
         </router-link>
 
-        <!-- 系统管理（仅管理员可见） -->
         <template v-if="isAdmin">
-          <div class="nav-group-label nav-group-sep">系统管理</div>
           <router-link to="/system/history" class="nav-item"
             :class="{ active: currentRoute === '/system/history' }"
             @click="isMobile && (sideOpen = false)">
@@ -111,6 +99,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessageBox, ElMessage } from 'element-plus'
 import { logout } from '@/api/auth'
+import { SYSTEM_LOGO_LABEL } from '@/constants/system'
 
 const router = useRouter()
 const route = useRoute()
@@ -176,7 +165,9 @@ async function handleLogout() {
    ============================================================ */
 .layout-root {
   display: flex;
+  height: 100vh;
   min-height: 100vh;
+  overflow: hidden;
   position: relative;
 }
 
@@ -185,6 +176,7 @@ async function handleLogout() {
    ============================================================ */
 .layout-aside {
   width: 220px;
+  height: 100vh;
   background: #001529;
   display: flex;
   flex-direction: column;
@@ -192,6 +184,9 @@ async function handleLogout() {
   transition: width 0.25s ease;
   overflow: hidden;
   z-index: 200;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
 }
 
 /* Desktop: collapsed to icon-only bar */
@@ -200,9 +195,7 @@ async function handleLogout() {
 }
 
 .aside-collapsed .logo-text,
-.aside-collapsed .aside-role-tag,
 .aside-collapsed .nav-text,
-.aside-collapsed .nav-group-label,
 .aside-collapsed .aside-footer .nav-text {
   display: none;
 }
@@ -244,9 +237,9 @@ async function handleLogout() {
 }
 .logo-text {
   color: #fff;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
-  white-space: nowrap;
+  line-height: 1.35;
 }
 
 /* ---- Role tag ---- */
@@ -362,6 +355,8 @@ async function handleLogout() {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  height: 100vh;
+  overflow: hidden;
 }
 
 /* ---- Header ---- */

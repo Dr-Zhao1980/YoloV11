@@ -96,13 +96,41 @@ def _finalize_detections(image_path, detections, confidence, engine, model_names
     }
 
 
+def _onnx_fixed_input_size(sess):
+    """读取 ONNX 固定输入边长；动态维度时返回 None。"""
+    shape = sess.get_inputs()[0].shape
+    if len(shape) < 4:
+        return None
+    h, w = shape[2], shape[3]
+    if isinstance(h, int) and isinstance(w, int) and h == w and h > 0:
+        return h
+    return None
+
+
 def infer_onnxruntime(image_path, confidence, model_path,
                       iou_threshold=0.45, imgsz=640):
     import onnxruntime as ort
     import numpy as np
     from PIL import Image
 
-    INPUT_SIZE = imgsz if imgsz in (320, 416, 640, 1024, 1280) else 640
+    sess_options = ort.SessionOptions()
+    sess_options.intra_op_num_threads = 1
+    sess_options.inter_op_num_threads = 1
+
+    sess = ort.InferenceSession(model_path, sess_options=sess_options,
+                                providers=['CPUExecutionProvider'])
+
+    fixed_size = _onnx_fixed_input_size(sess)
+    if fixed_size is not None:
+        if imgsz != fixed_size:
+            sys.stderr.write(
+                f'[model-inference] ONNX 固定输入 {fixed_size}×{fixed_size}，'
+                f'已忽略请求的 {imgsz}px\n'
+            )
+        INPUT_SIZE = fixed_size
+    else:
+        INPUT_SIZE = imgsz if imgsz in (320, 416, 640, 1024, 1280) else 640
+
     img = Image.open(image_path).convert('RGB')
     image_rgb = np.array(img)
     orig_w, orig_h = img.size
@@ -119,12 +147,6 @@ def infer_onnxruntime(image_path, confidence, model_path,
     arr = np.array(canvas, dtype=np.float32) / 255.0
     chw = arr.transpose(2, 0, 1)[np.newaxis]
 
-    sess_options = ort.SessionOptions()
-    sess_options.intra_op_num_threads = 1
-    sess_options.inter_op_num_threads = 1
-
-    sess = ort.InferenceSession(model_path, sess_options=sess_options,
-                                providers=['CPUExecutionProvider'])
     outputs = sess.run(None, {sess.get_inputs()[0].name: chw})
 
     # 分割模型：第二输出为 mask prototype
@@ -288,8 +310,15 @@ def main():
         sys.exit(1)
 
     model_path = selected_model_path or os.environ.get(
-        'YOLO_ONNX_PATH', os.path.join(BACKEND_DIR, 'models', 'best.onnx')
+        'YOLO_ONNX_PATH', os.path.join(BACKEND_DIR, 'models', 'brick-wall-v2.onnx')
     )
+    if not os.path.exists(model_path):
+        fallback_v2_pt = os.path.join(BACKEND_DIR, 'models', 'brick-wall-v2.pt')
+        fallback_v1 = os.path.join(BACKEND_DIR, 'models', 'brick-wall-v1.onnx')
+        if os.path.exists(fallback_v2_pt):
+            model_path = fallback_v2_pt
+        elif os.path.exists(fallback_v1):
+            model_path = fallback_v1
     model_path = os.path.abspath(model_path)
     models_dir = os.path.abspath(os.path.join(BACKEND_DIR, 'models'))
     if not model_path.startswith(models_dir + os.sep):
@@ -307,6 +336,18 @@ def main():
                 iou_threshold=iou_threshold, imgsz=imgsz,
             )
         elif ext == '.pt':
+            try:
+                import ultralytics  # noqa: F401
+            except ImportError:
+                print(json.dumps({
+                    'success': False,
+                    'message': (
+                        '当前 Python 环境未安装 ultralytics，无法加载 .pt 模型。'
+                        '请执行: pip install -r backend/requirements.txt ，'
+                        '或运行 python backend/export_onnx.py 导出 brick-wall-v2.onnx 后选用 ONNX 模型。'
+                    ),
+                }, ensure_ascii=False))
+                sys.exit(1)
             result = infer_ultralytics(
                 image_path, confidence, model_path,
                 iou_threshold=iou_threshold, imgsz=imgsz,

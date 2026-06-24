@@ -1,13 +1,13 @@
-# YoloV11 — 红砖墙病害智能查勘
+# YoloV11 — 基于机器视觉的历史工业建筑外立面病害智能诊断系统
 
-本仓库为 **YOLOv11 红砖墙病害识别** 课题的工程化交付仓库，核心可运行系统位于子目录 [`brick-wall-detector/`](brick-wall-detector/)。
+本仓库为 **YOLOv11 历史工业建筑外立面病害识别** 课题的工程化交付仓库，核心可运行系统位于子目录 [`brick-wall-detector/`](brick-wall-detector/)。
 
 ## 仓库结构
 
 ```
 YoloV11/
 ├── README.md                 # 本文件（仓库总览）
-├── brick-wall-detector/      # ★ 红砖墙病害智能检测 Web 系统（主交付物）
+├── brick-wall-detector/      # ★ 外立面病害智能诊断 Web 系统（主交付物）
 │   ├── README.md             # 安装、功能、API 速览（请先阅读）
 │   ├── docs/                 # 详细文档（架构、部署、课题说明等）
 │   ├── backend/              # Express API + Python 推理
@@ -30,13 +30,14 @@ npm start
 
 浏览器访问：**http://localhost:3080**
 
-> 模型权重请置于 `brick-wall-detector/backend/models/`（如 `best.pt` / `best.onnx`），详见子项目 README。
+> 模型权重请置于 `brick-wall-detector/backend/models/`（如 `brick-wall-v2.onnx`），详见子项目 README。
 
 ## 文档索引
 
 | 文档 | 说明 |
 |------|------|
 | [brick-wall-detector/README.md](brick-wall-detector/README.md) | 系统功能、环境、启动、结构 |
+| [brick-wall-detector/docs/PROJECT_STRUCTURE.md](brick-wall-detector/docs/PROJECT_STRUCTURE.md) | **项目目录树与各文件职责**（分级说明） |
 | [brick-wall-detector/docs/README.md](brick-wall-detector/docs/README.md) | 全部文档目录 |
 | [brick-wall-detector/CHANGELOG.md](brick-wall-detector/CHANGELOG.md) | 版本变更记录 |
 

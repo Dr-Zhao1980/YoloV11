@@ -6,6 +6,7 @@ export interface SystemSettings {
   modelVersion: string
   confidenceThreshold: number
   iouThreshold: number
+  inferImageSize: number
   enableHeatmap: boolean
   enableAutoReport: boolean
   storageType: string

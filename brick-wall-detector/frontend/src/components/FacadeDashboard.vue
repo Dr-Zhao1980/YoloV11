@@ -37,7 +37,7 @@
         查看原始切片
       </el-button>
     </div>
-    <el-empty v-else description="点击左侧热力图格子查看局部详情" />
+    <el-empty v-else description="点击左侧网格定损图格子查看局部详情" />
 
     <el-button
       type="primary"
